@@ -4,7 +4,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Petshop Bigboss <?= $title ?? '' ?></title>
+    <title>Doulyra <?= $title ?? '' ?></title>
 
     <link rel="shortcut icon" href="<?= base_url('favicon.ico?v=<?= time() ?>') ?>" type="image/x-icon">
     <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Source+Sans+Pro:300,400,400i,700&display=fallback">
@@ -23,7 +23,7 @@
     <style>
         .nav-sidebar .nav-link.active,
         .nav-sidebar .nav-link.active:hover {
-            background-color: #FFC107 !important;
+            background-color: #6610f2 !important;
             color: #000 !important;
             box-shadow: none !important;
         }
@@ -91,7 +91,7 @@
 
             Swal.fire({
                 title: "Apakah anda yakin ingin keluar?",
-                icon: "warning",
+                icon: "indigo",
                 showCancelButton: true,
                 confirmButtonColor: "#3085d6",
                 cancelButtonColor: "#d33",

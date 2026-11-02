@@ -2,6 +2,7 @@
 
 namespace App\Controllers;
 
+use App\Models\PelangganModel;
 use App\Models\UserModel;
 
 class Auth extends BaseController
@@ -9,7 +10,7 @@ class Auth extends BaseController
     public function login()
     {
         if (session()->get('logged_in')) {
-            return redirect()->to($this->beranda(session()->get('role')));
+            return redirect()->to(site_url('/'));
         }
 
         return view('auth/login');
@@ -17,69 +18,89 @@ class Auth extends BaseController
 
     public function prosesLogin()
     {
-        if (! $this->validate(['login' => 'required', 'password' => 'required'])) {
-            return redirect()->back()->withInput()->with('error', 'Username/email dan password wajib diisi.');
+        if (! $this->validate([
+            'username' => 'required',
+            'password' => 'required',
+        ])) {
+            return redirect()->back()->withInput()->with('error', 'Username dan password wajib diisi.');
         }
 
-        $user = model(UserModel::class)->findByLogin($this->request->getPost('login'));
+        $user = (new UserModel())->getByUsername($this->request->getPost('username'));
 
         if (! $user || ! password_verify($this->request->getPost('password'), $user['password'])) {
-            return redirect()->back()->withInput()->with('error', 'Username/email atau password salah, atau akun nonaktif.');
+            return redirect()->back()->withInput()->with('error', 'Username atau password salah.');
         }
 
-        session()->regenerate();
         session()->set([
-            'logged_in' => true,
-            'id_user'   => (int) $user['id_user'],
-            'nama'      => $user['nama'],
-            'role'      => $user['role'],
+            'logged_in'    => true,
+            'user_id'      => $user['id'],
+            'nama'         => $user['nama_lengkap'],
+            'role'         => $user['role'],
+            'pelanggan_id' => $user['pelanggan_id'],
         ]);
 
-        return redirect()->to($this->beranda($user['role']));
+        $tujuan = session()->get('redirect_url')
+            ?? ($user['role'] === 'pelanggan' ? site_url('/') : site_url('dashboard'));
+        session()->remove('redirect_url');
+
+        return redirect()->to($tujuan);
     }
 
     public function register()
     {
+        if (session()->get('logged_in')) {
+            return redirect()->to(site_url('/'));
+        }
+
         return view('auth/register');
     }
 
     public function prosesRegister()
     {
-        $rules = [
-            'nama'             => 'required|max_length[100]',
-            'username'         => 'required|alpha_dash|min_length[4]|max_length[50]|is_unique[users.username]',
-            'email'            => 'required|valid_email|max_length[100]|is_unique[users.email]',
-            'no_hp'            => 'permit_empty|numeric|max_length[20]',
-            'password'         => 'required|min_length[6]',
-            'password_confirm' => 'required|matches[password]',
-        ];
-
-        if (! $this->validate($rules)) {
+        if (! $this->validate([
+            'nama_lengkap' => 'required|min_length[3]',
+            'email'        => 'required|valid_email|is_unique[users.email]',
+            'username'     => 'required|min_length[4]|is_unique[users.username]',
+            'no_hp'        => 'required|numeric|min_length[10]',
+            'alamat'       => 'required',
+            'password'     => 'required|min_length[6]',
+            'konfirmasi'   => 'required|matches[password]',
+        ])) {
             return redirect()->back()->withInput()->with('errors', $this->validator->getErrors());
         }
 
-        model(UserModel::class)->insert([
-            'nama'     => $this->request->getPost('nama'),
-            'username' => $this->request->getPost('username'),
-            'email'    => $this->request->getPost('email'),
-            'no_hp'    => $this->request->getPost('no_hp') ?: null,
-            'password' => $this->request->getPost('password'), // di-hash oleh UserModel
-            'role'     => 'pelanggan',
-            'status'   => 'aktif',
+        $db = db_connect();
+        $db->transStart();
+
+        $pelangganId = (new PelangganModel())->insert([
+            'namapelanggan'   => $this->request->getPost('nama_lengkap'),
+            'no_hp'  => $this->request->getPost('no_hp'),
+            'alamat' => $this->request->getPost('alamat'),
+        ], true);
+
+        (new UserModel())->insert([
+            'nama_lengkap' => $this->request->getPost('nama_lengkap'),
+            'email'        => $this->request->getPost('email'),
+            'username'     => $this->request->getPost('username'),
+            'password'     => $this->request->getPost('password'),
+            'role'         => 'pelanggan',
+            'pelanggan_id' => $pelangganId,
+            'created_at'   => date('Y-m-d H:i:s'),
         ]);
 
-        return redirect()->to('/login')->with('success', 'Registrasi berhasil. Silakan login.');
+        $db->transComplete();
+
+        if (! $db->transStatus()) {
+            return redirect()->back()->withInput()->with('error', 'Pendaftaran gagal, coba lagi.');
+        }
+
+        return redirect()->to(site_url('login'))->with('success', 'Akun berhasil dibuat. Silakan masuk.');
     }
 
     public function logout()
     {
         session()->destroy();
 
-        return redirect()->to('/login');
-    }
-
-    private function beranda(string $role): string
-    {
-        return ['admin' => '/admin', 'pimpinan' => '/pimpinan/laporan'][$role] ?? '/';
+        return redirect()->to(site_url('/'));
     }
 }

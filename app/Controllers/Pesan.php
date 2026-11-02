@@ -1,0 +1,299 @@
+<?php
+
+namespace App\Controllers;
+
+use App\Models\MakananModel;
+use App\Models\MinumanModel;
+use CodeIgniter\Exceptions\PageNotFoundException;
+
+class Pesan extends BaseController
+{
+    public function index($jenis, $id)
+    {
+        if (!session()->get('logged_in')) {
+            session()->set('redirect_url', current_url());
+
+            return redirect()->to(site_url('login'))->with('error', 'Silakan masuk dulu untuk memesan.');
+        }
+
+        helper('doulyra');
+
+        $menu = [];
+        foreach ((new MakananModel())->where('stok >', 0)->findAll() as $m) {
+            $menu[] = [
+                'jenis' => 'makanan',
+                'id'    => $m['idmakanan'],
+                'nama'  => $m['namamakanan'],
+                'harga' => (int) $m['harga'],
+                'stok'  => (int) $m['stok'],
+                'foto'  => foto_url('makanan', $m['foto']),
+            ];
+        }
+        foreach ((new MinumanModel())->where('stok >', 0)->findAll() as $m) {
+            $menu[] = [
+                'jenis' => 'minuman',
+                'id'    => $m['idminuman'],
+                'nama'  => $m['namaminuman'],
+                'harga' => (int) $m['harga'],
+                'stok'  => (int) $m['stok'],
+                'foto'  => foto_url('minuman', $m['foto']),
+            ];
+        }
+
+        $awal = $jenis . '|' . urldecode($id);
+        if (!in_array($awal, array_map(fn($m) => $m['jenis'] . '|' . $m['id'], $menu), true)) {
+            throw PageNotFoundException::forPageNotFound();
+        }
+
+        return view('pesan/index', ['menu' => $menu, 'awal' => $awal]);
+    }
+
+    private function wajibLogin()
+    {
+        if (!session()->get('logged_in') || session()->get('role') !== 'pelanggan') {
+            return redirect()->to(site_url('login'))->with('error', 'Silakan masuk sebagai pelanggan.');
+        }
+
+        return null;
+    }
+
+    private function milik(string $id): array
+    {
+        $db  = db_connect();
+        $trx = $db->table('transaksi')
+            ->where('idtransaksi', $id)
+            ->where('pelanggan_id', session()->get('pelanggan_id'))
+            ->get()->getRowArray();
+
+        if (!$trx) {
+            throw PageNotFoundException::forPageNotFound();
+        }
+
+        $items = $db->table('detail_transaksi d')
+            ->select("d.*, COALESCE(m.namamakanan, n.namaminuman) AS nama, COALESCE(m.foto, n.foto) AS foto, IF(d.makanan_id IS NULL, 'minuman', 'makanan') AS jenis", false)
+            ->join('makanan m', 'm.idmakanan = d.makanan_id', 'left')
+            ->join('minuman n', 'n.idminuman = d.minuman_id', 'left')
+            ->where('d.transaksi_id', $id)
+            ->get()->getResultArray();
+
+        return [
+            $trx,
+            $items,
+            $db->table('pembayaran')->where('transaksi_id', $id)->get()->getRowArray(),
+        ];
+    }
+
+    public function simpan()
+    {
+        if ($r = $this->wajibLogin()) {
+            return $r;
+        }
+
+        $metode = $this->request->getPost('metode');
+        $items  = $this->request->getPost('items');
+
+        if (!in_array($metode, ['cash', 'qris'], true) || !is_array($items) || !$items) {
+            return redirect()->back()->with('error', 'Pesanan tidak valid.');
+        }
+
+        $peta = [
+            'makanan' => ['makanan', 'idmakanan', 'namamakanan'],
+            'minuman' => ['minuman', 'idminuman', 'namaminuman'],
+        ];
+
+        $db    = db_connect();
+        $baris = [];
+        $total = 0;
+
+        // Harga dan stok selalu diambil dari database, bukan dari kiriman browser
+        foreach ($items as $it) {
+            $jenis  = $it['jenis'] ?? '';
+            $id     = $it['id'] ?? '';
+            $jumlah = (int) ($it['jumlah'] ?? 0);
+
+            if (!isset($peta[$jenis]) || $jumlah < 1) {
+                return redirect()->back()->with('error', 'Pesanan tidak valid.');
+            }
+
+            [$tabel, $kid, $knama] = $peta[$jenis];
+            $row = $db->table($tabel)->where($kid, $id)->get()->getRowArray();
+            $k   = $jenis . '|' . $id;
+            $jumlah += $baris[$k]['jumlah'] ?? 0;
+
+            if (!$row || $jumlah > (int) $row['stok']) {
+                return redirect()->back()->with('error', 'Stok tidak mencukupi untuk ' . ($row[$knama] ?? 'menu yang dipilih') . '.');
+            }
+
+            $baris[$k] = [
+                'tabel'  => $tabel,
+                'kid'    => $kid,
+                'jenis'  => $jenis,
+                'id'     => $id,
+                'nama'   => $row[$knama],
+                'foto'   => $row['foto'],
+                'harga'  => (int) $row['harga'],
+                'jumlah' => $jumlah,
+            ];
+        }
+
+        foreach ($baris as $b) {
+            $total += $b['harga'] * $b['jumlah'];
+        }
+
+        $kode  = date('ymdHis') . random_int(10, 99);
+        $idTrx = 'TRX' . $kode;
+        $galat = null;
+        $ok    = false;
+
+        try {
+            $db->transStart();
+
+            $ok = $db->table('transaksi')->insert([
+                'idtransaksi'    => $idTrx,
+                'tgltransaksi'   => date('Y-m-d'),
+                'pelanggan_id'   => session()->get('pelanggan_id'),
+                'totalbayar'     => $total,
+                'status_pesanan' => 'Di Siapkan',
+            ]);
+
+            foreach ($baris as $b) {
+                if (!$ok) {
+                    break;
+                }
+
+                $ok = $db->table('detail_transaksi')->insert([
+                    'transaksi_id' => $idTrx,
+                    'makanan_id'   => $b['jenis'] === 'makanan' ? $b['id'] : null,
+                    'minuman_id'   => $b['jenis'] === 'minuman' ? $b['id'] : null,
+                    'jumlah'       => $b['jumlah'],
+                    'harga'        => $b['harga'],
+                    'subtotal'     => $b['harga'] * $b['jumlah'],
+                ]);
+
+                if ($ok) {
+                    $ok = $db->table($b['tabel'])
+                        ->set('stok', 'stok - ' . (int) $b['jumlah'], false)
+                        ->where($b['kid'], $b['id'])
+                        ->update();
+                }
+            }
+
+            if ($ok) {
+                $ok = $db->table('pembayaran')->insert([
+                    'idpembayaran'      => 'PAY' . $kode,
+                    'tglpembayaran'     => date('Y-m-d'),
+                    'transaksi_id'      => $idTrx,
+                    'total_bayar'       => $total,
+                    'metode_pembayaran' => $metode,
+                    'status_pembayaran' => 'menunggu',
+                ]);
+            }
+
+            if (!$ok) {
+                $galat = $db->error()['message'];
+            }
+
+            $db->transComplete();
+        } catch (\Throwable $e) {
+            $db->transRollback();
+            $galat = $e->getMessage();
+            $ok    = false;
+        }
+
+        if (!$ok || !$db->transStatus()) {
+            return redirect()->back()->with('error', 'Gagal simpan: ' . ($galat ?: 'penyebab tidak diketahui'));
+        }
+
+        return redirect()->to(site_url(($metode === 'qris' ? 'pesan/qris/' : 'pesan/detail/') . $idTrx));
+    }
+
+    public function qris($id)
+    {
+        if ($r = $this->wajibLogin()) {
+            return $r;
+        }
+
+        [$trx,, $bayar] = $this->milik($id);
+
+        if ($bayar['metode_pembayaran'] !== 'qris' || $bayar['bukti']) {
+            return redirect()->to(site_url('pesan/detail/' . $id));
+        }
+
+        return view('pesan/qris', ['title' => 'Pembayaran QRIS', 'trx' => $trx]);
+    }
+
+    public function bukti($id)
+    {
+        if ($r = $this->wajibLogin()) {
+            return $r;
+        }
+
+        [,, $bayar] = $this->milik($id);
+
+        if ($bayar['metode'] !== 'qris' || $bayar['bukti']) {
+            return redirect()->to(site_url('pesan/detail/' . $id));
+        }
+
+        if (!$this->validate(['bukti' => 'uploaded[bukti]|is_image[bukti]|max_size[bukti,2048]'])) {
+            return redirect()->back()->with('error', 'Unggah gambar bukti pembayaran (maksimal 2 MB).');
+        }
+
+        $file = $this->request->getFile('bukti');
+        $nama = $file->getRandomName();
+        $file->move(FCPATH . 'uploads/bukti', $nama);
+
+        $db = db_connect();
+        $db->transStart();
+        $db->table('pembayaran')->where('transaksi_id', $id)
+            ->update(['bukti' => $nama, 'status_pembayaran' => 'Menunggu Verifikasi']);
+        $db->transComplete();
+
+        return redirect()->to(site_url('pesan/detail/' . $id));
+    }
+
+    public function detail($id)
+    {
+        if ($r = $this->wajibLogin()) {
+            return $r;
+        }
+
+        [$trx, $items, $bayar] = $this->milik($id);
+
+        if ($bayar['metode_pembayaran'] === 'qris' && !$bayar['bukti']) {
+            return redirect()->to(site_url('pesan/qris/' . $id));
+        }
+
+        helper('doulyra');
+
+        return view('pesan/detail', ['title' => 'Detail Pesanan', 'trx' => $trx, 'items' => $items, 'bayar' => $bayar]);
+    }
+
+    public function status($id)
+    {
+        if ($r = $this->wajibLogin()) {
+            return $r;
+        }
+
+        [$trx,, $bayar] = $this->milik($id);
+
+        return $this->response->setJSON([
+            'status' => $trx['status_pesanan'],
+            'bayar'  => $bayar['status_pembayaran'],
+        ]);
+    }
+
+    public function terima($id)
+    {
+        if ($r = $this->wajibLogin()) {
+            return $r;
+        }
+
+        [$trx] = $this->milik($id);
+
+        if ($trx['status_pesanan'] === 'Di Antar') {
+            db_connect()->table('transaksi')->where('idtransaksi', $id)->update(['status_pesanan' => 'Di Terima']);
+        }
+
+        return redirect()->to(site_url('pesan/detail/' . $id));
+    }
+}

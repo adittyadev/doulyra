@@ -1,331 +1,1464 @@
+<?php
+/* =====================================================
+   DOULYRA - Home Page
+   Database : db_doulyra (tabel makanan & minuman)
+   ===================================================== */
+
+// ---------- KONFIGURASI ----------
+$DB_HOST = 'localhost';
+$DB_USER = 'root';
+$DB_PASS = '';
+$DB_NAME = 'db_doulyra';
+
+// Folder tempat file foto disimpan (kolom `foto` hanya berisi nama file)
+$FOLDER_MAKANAN = 'uploads/makanan/';
+$FOLDER_MINUMAN = 'uploads/minuman/';
+
+// Tautan halaman lain (sesuaikan dengan project Anda)
+$LINK_LOGIN  = 'login.php';
+$LINK_DAFTAR = 'register.php';
+$LINK_PESAN  = 'login.php'; // arahkan ke halaman pemesanan / login pelanggan
+
+// ---------- AMBIL DATA ----------
+$makanan = [];
+$minuman = [];
+$dbError = false;
+
+mysqli_report(MYSQLI_REPORT_OFF);
+$conn = @new mysqli($DB_HOST, $DB_USER, $DB_PASS, $DB_NAME);
+
+if ($conn->connect_errno) {
+    $dbError = true;
+} else {
+    $conn->set_charset('utf8mb4');
+
+    $q = $conn->query("SELECT idmakanan, namamakanan, harga, stok, foto, keterangan
+                       FROM makanan ORDER BY namamakanan ASC");
+    if ($q) {
+        while ($r = $q->fetch_assoc()) $makanan[] = $r;
+    }
+
+    $q = $conn->query("SELECT idminuman, namaminuman, harga, stok, foto, keterangan
+                       FROM minuman ORDER BY namaminuman ASC");
+    if ($q) {
+        while ($r = $q->fetch_assoc()) $minuman[] = $r;
+    }
+
+    $conn->close();
+}
+
+// Data contoh agar tampilan tetap terlihat saat tabel masih kosong
+$demo = false;
+if (!$makanan && !$minuman) {
+    $demo = true;
+    $makanan = [
+        ['idmakanan' => 'M001', 'namamakanan' => 'Nasi Ayam Geprek', 'harga' => 18000, 'stok' => 25, 'foto' => '', 'keterangan' => 'Ayam krispi dengan sambal geprek pedas segar dan nasi hangat.'],
+        ['idmakanan' => 'M002', 'namamakanan' => 'Mie Goreng Spesial', 'harga' => 15000, 'stok' => 18, 'foto' => '', 'keterangan' => 'Mie goreng bumbu khas dengan telur, sayur, dan bakso.'],
+        ['idmakanan' => 'M003', 'namamakanan' => 'Burger Beef Lumer', 'harga' => 25000, 'stok' => 0, 'foto' => '', 'keterangan' => 'Daging sapi juicy, keju leleh, dan saus rahasia.'],
+        ['idmakanan' => 'M004', 'namamakanan' => 'Kentang Goreng', 'harga' => 12000, 'stok' => 40, 'foto' => '', 'keterangan' => 'Renyah di luar, lembut di dalam, taburan bumbu pilihan.'],
+    ];
+    $minuman = [
+        ['idminuman' => 'D001', 'namaminuman' => 'Taro Latte', 'harga' => 16000, 'stok' => 30, 'foto' => '', 'keterangan' => 'Perpaduan taro creamy dan susu yang manis lembut.'],
+        ['idminuman' => 'D002', 'namaminuman' => 'Es Kopi Susu', 'harga' => 14000, 'stok' => 22, 'foto' => '', 'keterangan' => 'Kopi pekat, susu segar, dan gula aren.'],
+        ['idminuman' => 'D003', 'namaminuman' => 'Lemon Tea Segar', 'harga' => 10000, 'stok' => 35, 'foto' => '', 'keterangan' => 'Teh dingin dengan perasan lemon asli.'],
+        ['idminuman' => 'D004', 'namaminuman' => 'Thai Tea', 'harga' => 13000, 'stok' => 0, 'foto' => '', 'keterangan' => 'Teh Thailand manis gurih dengan susu kental.'],
+    ];
+}
+
+// ---------- HELPER ----------
+function e($s)
+{
+    return htmlspecialchars((string)$s, ENT_QUOTES, 'UTF-8');
+}
+function rupiah($n)
+{
+    return 'Rp ' . number_format((float)$n, 0, ',', '.');
+}
+function fotoUrl($folder, $file)
+{
+    if (!$file) return '';
+    return $folder . rawurlencode(basename($file));
+}
+
+// Item unggulan untuk banner (item pertama yang tersedia)
+function pertama($arr)
+{
+    foreach ($arr as $a) if ((int)$a['stok'] > 0) return $a;
+    return $arr[0] ?? null;
+}
+$heroMakan = pertama($makanan);
+$heroMinum = pertama($minuman);
+
+// Komponen kartu menu
+function kartuMenu($item, $jenis, $folder, $linkPesan)
+{
+    $nama = $jenis === 'makanan' ? $item['namamakanan'] : $item['namaminuman'];
+    $id   = $jenis === 'makanan' ? $item['idmakanan']   : $item['idminuman'];
+    $foto = fotoUrl($folder, $item['foto']);
+    $habis = (int)$item['stok'] <= 0;
+    $emoji = $jenis === 'makanan' ? '🍽️' : '🥤';
+?>
+    <article class="card <?= $habis ? 'is-out' : '' ?>">
+        <div class="card__img">
+            <?php if ($foto): ?>
+                <img src="<?= e($foto) ?>" alt="<?= e($nama) ?>" loading="lazy"
+                    onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'card__emoji',textContent:'<?= $emoji ?>'}))">
+            <?php else: ?>
+                <span class="card__emoji"><?= $emoji ?></span>
+            <?php endif; ?>
+            <span class="badge <?= $habis ? 'badge--out' : 'badge--ok' ?>">
+                <?= $habis ? 'Stok habis' : 'Stok ' . (int)$item['stok'] ?>
+            </span>
+        </div>
+        <div class="card__body">
+            <h3><?= e($nama) ?></h3>
+            <p><?= e($item['keterangan'] ?: 'Dibuat segar setiap hari untuk Anda.') ?></p>
+            <div class="card__foot">
+                <strong><?= rupiah($item['harga']) ?></strong>
+                <?php if ($habis): ?>
+                    <span class="btn btn--disabled">Habis</span>
+                <?php else: ?>
+                    <a class="btn btn--buy" href="<?= e($linkPesan) ?>?<?= $jenis ?>=<?= urlencode($id) ?>">Pesan</a>
+                <?php endif; ?>
+            </div>
+        </div>
+    </article>
+<?php
+}
+?>
 <!DOCTYPE html>
-<html lang="en">
+<html lang="id">
+
 <head>
     <meta charset="UTF-8">
-    <title>Welcome to CodeIgniter 4!</title>
-    <meta name="description" content="The small framework with powerful features">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="shortcut icon" type="image/png" href="/favicon.ico">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Doulyra | Makanan &amp; Minuman</title>
+    <meta name="description" content="Doulyra - pesan makanan dan minuman favorit Anda, disiapkan segar dan diantar sampai rumah.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
 
-    <!-- STYLES -->
+    <style>
+        :root {
+            --purple: #6610f2;
+            --purple-dark: #3d0a91;
+            --purple-deep: #240657;
+            --purple-soft: #ede3ff;
+            --cream: #fff6e3;
+            --cream-deep: #ffe9bd;
+            --ink: #2a1650;
+            --muted: #6f6488;
+            --radius: 22px;
+            --font-display: 'Bricolage Grotesque', 'Trebuchet MS', sans-serif;
+            --font-body: 'Figtree', 'Segoe UI', sans-serif;
+        }
 
-    <style {csp-style-nonce}>
         * {
-            transition: background-color 300ms ease, color 300ms ease;
-        }
-        *:focus {
-            background-color: rgba(221, 72, 20, .2);
-            outline: none;
-        }
-        html, body {
-            color: rgba(33, 37, 41, 1);
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
-            font-size: 16px;
+            box-sizing: border-box;
             margin: 0;
-            padding: 0;
-            -webkit-font-smoothing: antialiased;
-            -moz-osx-font-smoothing: grayscale;
-            text-rendering: optimizeLegibility;
+            padding: 0
         }
-        header {
-            background-color: rgba(247, 248, 249, 1);
-            padding: .4rem 0 0;
+
+        html {
+            scroll-behavior: smooth;
+            scroll-padding-top: 84px
         }
-        .menu {
-            padding: .4rem 2rem;
+
+        body {
+            font-family: var(--font-body);
+            background: var(--cream);
+            color: var(--ink);
+            line-height: 1.6;
+            overflow-x: hidden
         }
-        header ul {
-            border-bottom: 1px solid rgba(242, 242, 242, 1);
-            list-style-type: none;
-            margin: 0;
-            overflow: hidden;
-            padding: 0;
-            text-align: right;
+
+        img {
+            max-width: 100%;
+            display: block
         }
-        header li {
-            display: inline-block;
+
+        a {
+            color: inherit;
+            text-decoration: none
         }
-        header li a {
-            border-radius: 5px;
-            color: rgba(0, 0, 0, .5);
-            display: block;
-            height: 44px;
-            text-decoration: none;
+
+        :focus-visible {
+            outline: 3px solid var(--purple);
+            outline-offset: 3px;
+            border-radius: 8px
         }
-        header li.menu-item a {
-            border-radius: 5px;
-            margin: 5px 0;
-            height: 38px;
-            line-height: 36px;
-            padding: .4rem .65rem;
-            text-align: center;
+
+        .container {
+            width: min(1160px, 92%);
+            margin-inline: auto
         }
-        header li.menu-item a:hover,
-        header li.menu-item a:focus {
-            background-color: rgba(221, 72, 20, .2);
-            color: rgba(221, 72, 20, 1);
+
+        /* ---------- NAVBAR ---------- */
+        .nav {
+            position: fixed;
+            inset: 0 0 auto 0;
+            z-index: 50;
+            transition: background .3s, box-shadow .3s
         }
-        header .logo {
-            float: left;
-            height: 44px;
-            padding: .4rem .5rem;
+
+        .nav.scrolled {
+            background: rgba(255, 246, 227, .92);
+            backdrop-filter: blur(10px);
+            box-shadow: 0 6px 24px rgba(36, 6, 87, .12)
         }
-        header .menu-toggle {
-            display: none;
-            float: right;
-            font-size: 2rem;
-            font-weight: bold;
+
+        .nav__in {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 72px
         }
-        header .menu-toggle button {
-            background-color: rgba(221, 72, 20, .6);
-            border: none;
-            border-radius: 3px;
-            color: rgba(255, 255, 255, 1);
-            cursor: pointer;
-            font: inherit;
-            font-size: 1.3rem;
-            height: 36px;
-            padding: 0;
-            margin: 11px 0;
-            overflow: visible;
-            width: 40px;
+
+        .logo {
+            font-family: var(--font-display);
+            font-weight: 800;
+            font-size: 1.7rem;
+            color: var(--cream);
+            letter-spacing: -.02em;
+            transition: color .3s
         }
-        header .menu-toggle button:hover,
-        header .menu-toggle button:focus {
-            background-color: rgba(221, 72, 20, .8);
-            color: rgba(255, 255, 255, .8);
+
+        .logo i {
+            font-style: normal;
+            color: var(--cream-deep)
         }
-        header .heroe {
-            margin: 0 auto;
-            max-width: 1100px;
-            padding: 1rem 1.75rem 1.75rem 1.75rem;
+
+        .nav.scrolled .logo {
+            color: var(--purple)
         }
-        header .heroe h1 {
-            font-size: 2.5rem;
+
+        .nav.scrolled .logo i {
+            color: var(--purple-dark)
+        }
+
+        .nav__links {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            list-style: none
+        }
+
+        .nav__links a {
+            padding: 8px 16px;
+            border-radius: 99px;
             font-weight: 500;
+            color: var(--cream);
+            transition: .25s
         }
-        header .heroe h2 {
-            font-size: 1.5rem;
-            font-weight: 300;
+
+        .nav.scrolled .nav__links a {
+            color: var(--ink)
         }
-        section {
-            margin: 0 auto;
-            max-width: 1100px;
-            padding: 2.5rem 1.75rem 3.5rem 1.75rem;
+
+        .nav__links a:hover {
+            background: rgba(255, 255, 255, .18)
         }
-        section h1 {
-            margin-bottom: 2.5rem;
+
+        .nav.scrolled .nav__links a:hover {
+            background: var(--purple-soft)
         }
-        section h2 {
-            font-size: 120%;
-            line-height: 2.5rem;
-            padding-top: 1.5rem;
+
+        .nav__links .nav__cta {
+            background: var(--cream);
+            color: var(--purple) !important;
+            font-weight: 600
         }
-        section pre {
-            background-color: rgba(247, 248, 249, 1);
-            border: 1px solid rgba(242, 242, 242, 1);
+
+        .nav.scrolled .nav__links .nav__cta {
+            background: var(--purple);
+            color: var(--cream) !important
+        }
+
+        .burger {
+            display: none;
+            background: none;
+            border: 0;
+            width: 44px;
+            height: 44px;
+            cursor: pointer
+        }
+
+        .burger span {
             display: block;
-            font-size: .9rem;
-            margin: 2rem 0;
-            padding: 1rem 1.5rem;
-            white-space: pre-wrap;
-            word-break: break-all;
+            width: 24px;
+            height: 2px;
+            background: var(--cream);
+            margin: 6px auto;
+            transition: .3s
         }
-        section code {
+
+        .nav.scrolled .burger span {
+            background: var(--purple)
+        }
+
+        /* ---------- HERO ---------- */
+        .hero {
+            position: relative;
+            background: var(--purple);
+            color: var(--cream);
+            padding: 150px 0 0;
+            overflow: hidden;
+            isolation: isolate
+        }
+
+        .hero::before,
+        .hero::after {
+            content: "";
+            position: absolute;
+            border-radius: 50%;
+            z-index: -1
+        }
+
+        .hero::before {
+            width: 620px;
+            height: 620px;
+            right: -160px;
+            top: -180px;
+            background: radial-gradient(circle at 30% 30%, #8a45ff, #6610f2 65%)
+        }
+
+        .hero::after {
+            width: 380px;
+            height: 380px;
+            left: -140px;
+            bottom: 60px;
+            background: var(--purple-dark);
+            opacity: .55
+        }
+
+        .hero__grid {
+            display: grid;
+            grid-template-columns: 1.05fr .95fr;
+            gap: 40px;
+            align-items: center;
+            padding-bottom: 110px
+        }
+
+        .hero__tag {
+            display: inline-flex;
+            gap: 8px;
+            align-items: center;
+            background: rgba(255, 246, 227, .14);
+            border: 1px solid rgba(255, 246, 227, .3);
+            padding: 6px 16px;
+            border-radius: 99px;
+            font-size: .92rem;
+            margin-bottom: 22px
+        }
+
+        .hero__tag b {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #7dffb0;
+            animation: pulse 1.8s infinite
+        }
+
+        .hero h1 {
+            font-family: var(--font-display);
+            font-weight: 800;
+            font-size: clamp(2.6rem, 6.2vw, 5rem);
+            line-height: 1.02;
+            letter-spacing: -.035em;
+            margin-bottom: 22px
+        }
+
+        .hero h1 span {
+            display: block
+        }
+
+        .hero h1 .line2 {
+            color: var(--cream-deep);
+            font-style: italic;
+            font-weight: 700
+        }
+
+        .hero p {
+            max-width: 480px;
+            font-size: 1.1rem;
+            opacity: .92;
+            margin-bottom: 34px
+        }
+
+        .hero__btns {
+            display: flex;
+            gap: 14px;
+            flex-wrap: wrap
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 13px 28px;
+            border-radius: 99px;
+            font-weight: 600;
+            font-family: var(--font-body);
+            font-size: 1rem;
+            border: 2px solid transparent;
+            cursor: pointer;
+            transition: transform .25s, box-shadow .25s, background .25s, color .25s
+        }
+
+        .btn--cream {
+            background: var(--cream);
+            color: var(--purple)
+        }
+
+        .btn--cream:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 12px 26px rgba(0, 0, 0, .28)
+        }
+
+        .btn--ghost {
+            border-color: rgba(255, 246, 227, .55);
+            color: var(--cream)
+        }
+
+        .btn--ghost:hover {
+            background: var(--cream);
+            color: var(--purple);
+            transform: translateY(-3px)
+        }
+
+        .hero__stats {
+            display: flex;
+            gap: 34px;
+            margin-top: 44px
+        }
+
+        .hero__stats strong {
             display: block;
+            font-family: var(--font-display);
+            font-size: 1.9rem;
+            line-height: 1.1
         }
-        section a {
-            color: rgba(221, 72, 20, 1);
+
+        .hero__stats span {
+            font-size: .88rem;
+            opacity: .8
         }
-        section svg {
-            margin-bottom: -5px;
-            margin-right: 5px;
-            width: 25px;
+
+        /* visual banner */
+        .hero__visual {
+            position: relative;
+            display: grid;
+            place-items: center;
+            min-height: 440px
         }
-        .further {
-            background-color: rgba(247, 248, 249, 1);
-            border-bottom: 1px solid rgba(242, 242, 242, 1);
-            border-top: 1px solid rgba(242, 242, 242, 1);
+
+        .plate {
+            position: relative;
+            width: min(400px, 80vw);
+            aspect-ratio: 1;
+            border-radius: 50%;
+            background: var(--cream);
+            display: grid;
+            place-items: center;
+            box-shadow: 0 0 0 14px rgba(255, 246, 227, .16), 0 40px 80px rgba(20, 0, 60, .5);
+            animation: float 6s ease-in-out infinite
         }
-        .further h2:first-of-type {
-            padding-top: 0;
+
+        .plate img,
+        .plate .plate__emoji {
+            width: 78%;
+            height: 78%;
+            object-fit: cover;
+            border-radius: 50%
         }
-        .svg-stroke {
-            fill: none;
-            stroke: #000;
-            stroke-width: 32px;
+
+        .plate__emoji {
+            display: grid;
+            place-items: center;
+            font-size: 9rem;
+            background: var(--cream-deep)
         }
-        footer {
-            background-color: rgba(221, 72, 20, .8);
+
+        .ring {
+            position: absolute;
+            width: min(480px, 92vw);
+            aspect-ratio: 1;
+            animation: spin 22s linear infinite
+        }
+
+        .ring text {
+            font-family: var(--font-display);
+            font-size: 15px;
+            font-weight: 700;
+            letter-spacing: .2em;
+            fill: var(--cream-deep)
+        }
+
+        .chip {
+            position: absolute;
+            background: var(--cream);
+            color: var(--ink);
+            border-radius: 18px;
+            padding: 10px 16px 10px 10px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            box-shadow: 0 18px 40px rgba(20, 0, 60, .35)
+        }
+
+        .chip__ico {
+            width: 50px;
+            height: 50px;
+            border-radius: 14px;
+            background: var(--purple-soft);
+            display: grid;
+            place-items: center;
+            font-size: 1.7rem;
+            overflow: hidden
+        }
+
+        .chip__ico img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover
+        }
+
+        .chip small {
+            display: block;
+            color: var(--muted);
+            font-size: .78rem;
+            line-height: 1.2
+        }
+
+        .chip b {
+            font-family: var(--font-display);
+            font-size: 1rem;
+            line-height: 1.25;
+            display: block;
+            max-width: 150px
+        }
+
+        .chip--a {
+            left: -6px;
+            bottom: 50px;
+            animation: float 5s ease-in-out -2s infinite
+        }
+
+        .chip--b {
+            right: -6px;
+            top: 40px;
+            animation: float 5.5s ease-in-out -.8s infinite
+        }
+
+        /* gelombang pemisah */
+        .wave {
+            position: absolute;
+            left: 0;
+            right: 0;
+            bottom: -1px;
+            line-height: 0
+        }
+
+        .wave svg {
+            width: 100%;
+            height: 80px
+        }
+
+        /* entrance banner (sekali saat halaman dibuka) */
+        .hero__tag,
+        .hero h1 span,
+        .hero p,
+        .hero__btns,
+        .hero__stats,
+        .hero__visual {
+            opacity: 0;
+            animation: rise .9s cubic-bezier(.2, .8, .2, 1) forwards
+        }
+
+        .hero__tag {
+            animation-delay: .1s
+        }
+
+        .hero h1 .line1 {
+            animation-delay: .25s
+        }
+
+        .hero h1 .line2 {
+            animation-delay: .4s
+        }
+
+        .hero p {
+            animation-delay: .55s
+        }
+
+        .hero__btns {
+            animation-delay: .7s
+        }
+
+        .hero__stats {
+            animation-delay: .85s
+        }
+
+        .hero__visual {
+            animation-delay: .4s
+        }
+
+        /* ---------- MARQUEE ---------- */
+        .marquee {
+            background: var(--purple-deep);
+            color: var(--cream);
+            overflow: hidden;
+            padding: 16px 0;
+            border-block: 3px solid var(--cream-deep)
+        }
+
+        .marquee__track {
+            display: flex;
+            gap: 48px;
+            width: max-content;
+            animation: scroll 28s linear infinite
+        }
+
+        .marquee:hover .marquee__track {
+            animation-play-state: paused
+        }
+
+        .marquee__track span {
+            font-family: var(--font-display);
+            font-weight: 700;
+            font-size: 1.25rem;
+            white-space: nowrap;
+            display: flex;
+            align-items: center;
+            gap: 48px
+        }
+
+        .marquee__track span::after {
+            content: "✦";
+            color: var(--cream-deep)
+        }
+
+        /* ---------- MENU ---------- */
+        .section {
+            padding: 96px 0
+        }
+
+        .section__head {
             text-align: center;
+            max-width: 620px;
+            margin: 0 auto 38px
         }
-        footer .environment {
-            color: rgba(255, 255, 255, 1);
-            padding: 2rem 1.75rem;
+
+        .section__head h2 {
+            font-family: var(--font-display);
+            font-weight: 800;
+            font-size: clamp(2rem, 4.5vw, 3.2rem);
+            line-height: 1.1;
+            letter-spacing: -.03em;
+            color: var(--purple)
         }
-        footer .copyrights {
-            background-color: rgba(62, 62, 62, 1);
-            color: rgba(200, 200, 200, 1);
-            padding: .25rem 1.75rem;
+
+        .section__head p {
+            color: var(--muted);
+            margin-top: 12px
         }
-        @media (max-width: 629px) {
-            header ul {
-                padding: 0;
+
+        .tabs {
+            display: flex;
+            justify-content: center;
+            gap: 6px;
+            background: var(--purple-soft);
+            padding: 6px;
+            border-radius: 99px;
+            width: fit-content;
+            margin: 0 auto 46px;
+            position: relative
+        }
+
+        .tab {
+            position: relative;
+            z-index: 1;
+            border: 0;
+            background: none;
+            padding: 12px 30px;
+            border-radius: 99px;
+            font: 600 1rem var(--font-body);
+            color: var(--purple);
+            cursor: pointer;
+            transition: color .3s
+        }
+
+        .tab.active {
+            color: var(--cream)
+        }
+
+        .tabs__pill {
+            position: absolute;
+            z-index: 0;
+            top: 6px;
+            bottom: 6px;
+            left: 6px;
+            border-radius: 99px;
+            background: var(--purple);
+            transition: transform .4s cubic-bezier(.5, 1.4, .5, 1), width .4s;
+            box-shadow: 0 8px 18px rgba(102, 16, 242, .4)
+        }
+
+        .panel {
+            display: none
+        }
+
+        .panel.active {
+            display: block
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 26px
+        }
+
+        .empty {
+            text-align: center;
+            color: var(--muted);
+            padding: 40px 0
+        }
+
+        .card {
+            background: #fff;
+            border-radius: var(--radius);
+            overflow: hidden;
+            border: 2px solid transparent;
+            box-shadow: 0 10px 30px rgba(102, 16, 242, .1);
+            transition: transform .35s cubic-bezier(.2, .8, .2, 1), box-shadow .35s, border-color .35s;
+            display: flex;
+            flex-direction: column
+        }
+
+        .card:hover {
+            transform: translateY(-8px) rotate(-.6deg);
+            box-shadow: 0 24px 44px rgba(102, 16, 242, .22);
+            border-color: var(--purple)
+        }
+
+        .card__img {
+            position: relative;
+            aspect-ratio: 4/3;
+            background: linear-gradient(135deg, var(--cream-deep), var(--purple-soft));
+            display: grid;
+            place-items: center;
+            overflow: hidden
+        }
+
+        .card__img img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform .6s
+        }
+
+        .card:hover .card__img img {
+            transform: scale(1.1)
+        }
+
+        .card__emoji {
+            font-size: 4.4rem;
+            transition: transform .4s
+        }
+
+        .card:hover .card__emoji {
+            transform: scale(1.2) rotate(8deg)
+        }
+
+        .badge {
+            position: absolute;
+            top: 12px;
+            left: 12px;
+            font-size: .78rem;
+            font-weight: 600;
+            padding: 4px 12px;
+            border-radius: 99px
+        }
+
+        .badge--ok {
+            background: var(--cream);
+            color: var(--purple-dark)
+        }
+
+        .badge--out {
+            background: #3a2a5c;
+            color: #fff
+        }
+
+        .card__body {
+            padding: 20px 20px 22px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            flex: 1
+        }
+
+        .card__body h3 {
+            font-family: var(--font-display);
+            font-size: 1.25rem;
+            line-height: 1.25
+        }
+
+        .card__body p {
+            color: var(--muted);
+            font-size: .92rem;
+            flex: 1;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden
+        }
+
+        .card__foot {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-top: 8px;
+            gap: 10px
+        }
+
+        .card__foot strong {
+            font-family: var(--font-display);
+            font-size: 1.15rem;
+            color: var(--purple)
+        }
+
+        .btn--buy {
+            background: var(--purple);
+            color: var(--cream);
+            padding: 9px 22px
+        }
+
+        .btn--buy:hover {
+            background: var(--purple-dark);
+            transform: scale(1.07)
+        }
+
+        .btn--disabled {
+            background: #e6e0f0;
+            color: #8b82a0;
+            padding: 9px 22px;
+            cursor: not-allowed
+        }
+
+        .card.is-out .card__img {
+            filter: grayscale(.85)
+        }
+
+        .notice {
+            max-width: 760px;
+            margin: 0 auto 30px;
+            padding: 14px 20px;
+            border-radius: 16px;
+            font-size: .92rem;
+            text-align: center
+        }
+
+        .notice--demo {
+            background: var(--cream-deep);
+            color: #5a3d00
+        }
+
+        .notice--err {
+            background: #ffe0e0;
+            color: #7a1010
+        }
+
+        /* ---------- CARA PESAN ---------- */
+        .steps {
+            background: var(--purple);
+            color: var(--cream);
+            border-radius: 36px;
+            padding: 64px 48px;
+            position: relative;
+            overflow: hidden
+        }
+
+        .steps::after {
+            content: "";
+            position: absolute;
+            width: 320px;
+            height: 320px;
+            border-radius: 50%;
+            background: var(--purple-dark);
+            right: -100px;
+            bottom: -140px;
+            opacity: .6
+        }
+
+        .steps h2 {
+            font-family: var(--font-display);
+            font-weight: 800;
+            font-size: clamp(1.8rem, 4vw, 2.8rem);
+            letter-spacing: -.03em;
+            margin-bottom: 34px;
+            position: relative;
+            z-index: 1
+        }
+
+        .steps__grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 22px;
+            position: relative;
+            z-index: 1
+        }
+
+        .step {
+            background: rgba(255, 246, 227, .12);
+            border: 1px solid rgba(255, 246, 227, .25);
+            border-radius: 20px;
+            padding: 24px;
+            transition: .3s
+        }
+
+        .step:hover {
+            background: rgba(255, 246, 227, .2);
+            transform: translateY(-5px)
+        }
+
+        .step__ico {
+            font-size: 2rem;
+            margin-bottom: 10px
+        }
+
+        .step h3 {
+            font-family: var(--font-display);
+            font-size: 1.15rem;
+            margin-bottom: 4px
+        }
+
+        .step p {
+            font-size: .92rem;
+            opacity: .88
+        }
+
+        /* ---------- FOOTER ---------- */
+        .footer {
+            background: var(--purple-deep);
+            color: var(--cream);
+            margin-top: 96px;
+            position: relative
+        }
+
+        .footer__wave {
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: -79px;
+            line-height: 0
+        }
+
+        .footer__wave svg {
+            width: 100%;
+            height: 80px
+        }
+
+        .footer__grid {
+            display: grid;
+            grid-template-columns: 1.5fr 1fr 1fr 1.2fr;
+            gap: 40px;
+            padding: 36px 0 50px
+        }
+
+        .footer .logo {
+            color: var(--cream);
+            font-size: 2rem
+        }
+
+        .footer p {
+            opacity: .78;
+            font-size: .95rem;
+            margin-top: 10px;
+            max-width: 300px
+        }
+
+        .footer h4 {
+            font-family: var(--font-display);
+            font-size: 1.1rem;
+            margin-bottom: 14px;
+            color: var(--cream-deep)
+        }
+
+        .footer ul {
+            list-style: none;
+            display: grid;
+            gap: 9px
+        }
+
+        .footer li,
+        .footer li a {
+            font-size: .95rem;
+            opacity: .85
+        }
+
+        .footer li a {
+            display: inline-block;
+            transition: .25s
+        }
+
+        .footer li a:hover {
+            opacity: 1;
+            color: var(--cream-deep);
+            transform: translateX(5px)
+        }
+
+        .social {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px
+        }
+
+        .social a {
+            width: 42px;
+            height: 42px;
+            border-radius: 50%;
+            background: rgba(255, 246, 227, .12);
+            display: grid;
+            place-items: center;
+            font-weight: 700;
+            transition: .3s
+        }
+
+        .social a:hover {
+            background: var(--cream);
+            color: var(--purple);
+            transform: translateY(-4px) rotate(-8deg)
+        }
+
+        .footer__bottom {
+            border-top: 1px solid rgba(255, 246, 227, .18);
+            padding: 20px 0;
+            text-align: center;
+            font-size: .88rem;
+            opacity: .7
+        }
+
+        /* ---------- SCROLL REVEAL ---------- */
+        .reveal {
+            opacity: 0;
+            transform: translateY(34px);
+            transition: opacity .8s ease, transform .8s cubic-bezier(.2, .8, .2, 1)
+        }
+
+        .reveal.in {
+            opacity: 1;
+            transform: none
+        }
+
+        /* ---------- KEYFRAMES ---------- */
+        @keyframes rise {
+            from {
+                opacity: 0;
+                transform: translateY(34px)
             }
-            header .menu-toggle {
-                padding: 0 1rem;
+
+            to {
+                opacity: 1;
+                transform: none
             }
-            header .menu-item {
-                background-color: rgba(244, 245, 246, 1);
-                border-top: 1px solid rgba(242, 242, 242, 1);
-                margin: 0 15px;
-                width: calc(100% - 30px);
+        }
+
+        @keyframes float {
+
+            0%,
+            100% {
+                transform: translateY(0)
             }
-            header .menu-toggle {
-                display: block;
+
+            50% {
+                transform: translateY(-16px)
             }
-            header .hidden {
-                display: none;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg)
             }
-            header li.menu-item a {
-                background-color: rgba(221, 72, 20, .1);
+        }
+
+        @keyframes scroll {
+            to {
+                transform: translateX(calc(-50% - 24px))
             }
-            header li.menu-item a:hover,
-            header li.menu-item a:focus {
-                background-color: rgba(221, 72, 20, .7);
-                color: rgba(255, 255, 255, .8);
+        }
+
+        @keyframes pulse {
+            0% {
+                box-shadow: 0 0 0 0 rgba(125, 255, 176, .7)
+            }
+
+            70% {
+                box-shadow: 0 0 0 10px rgba(125, 255, 176, 0)
+            }
+
+            100% {
+                box-shadow: 0 0 0 0 rgba(125, 255, 176, 0)
+            }
+        }
+
+        /* ---------- RESPONSIVE ---------- */
+        @media (max-width:900px) {
+            .hero__grid {
+                grid-template-columns: 1fr;
+                text-align: center
+            }
+
+            .hero p {
+                margin-inline: auto
+            }
+
+            .hero__btns,
+            .hero__stats {
+                justify-content: center
+            }
+
+            .hero__visual {
+                min-height: 380px
+            }
+
+            .footer__grid {
+                grid-template-columns: 1fr 1fr
+            }
+
+            .steps {
+                padding: 44px 26px
+            }
+        }
+
+        @media (max-width:720px) {
+            .burger {
+                display: block
+            }
+
+            .nav__links {
+                position: fixed;
+                inset: 72px 4% auto 4%;
+                flex-direction: column;
+                background: var(--cream);
+                padding: 16px;
+                border-radius: 22px;
+                box-shadow: 0 20px 50px rgba(36, 6, 87, .3);
+                transform: translateY(-20px);
+                opacity: 0;
+                pointer-events: none;
+                transition: .3s
+            }
+
+            .nav__links.open {
+                transform: none;
+                opacity: 1;
+                pointer-events: auto
+            }
+
+            .nav__links a {
+                color: var(--ink) !important;
+                width: 100%;
+                text-align: center
+            }
+
+            .chip {
+                display: none
+            }
+
+            .footer__grid {
+                grid-template-columns: 1fr
+            }
+        }
+
+        @media (prefers-reduced-motion:reduce) {
+
+            *,
+            *::before,
+            *::after {
+                animation-duration: .01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: .01ms !important
+            }
+
+            .reveal,
+            .hero__tag,
+            .hero h1 span,
+            .hero p,
+            .hero__btns,
+            .hero__stats,
+            .hero__visual {
+                opacity: 1;
+                transform: none
             }
         }
     </style>
 </head>
+
 <body>
 
-<!-- HEADER: MENU + HEROE SECTION -->
-<header>
+    <!-- ================= NAVBAR ================= -->
+    <header class="nav" id="nav">
+        <div class="container nav__in">
+            <a href="#beranda" class="logo">Doulyra<i>.</i></a>
+            <button class="burger" id="burger" aria-label="Buka menu navigasi"><span></span><span></span><span></span></button>
+            <ul class="nav__links" id="navLinks">
+                <li><a href="#beranda">Beranda</a></li>
+                <li><a href="#menu">Menu</a></li>
+                <li><a href="#cara-pesan">Cara Pesan</a></li>
+                <li><a href="#kontak">Kontak</a></li>
+                <li><a href="<?= e($LINK_LOGIN) ?>">Masuk</a></li>
+                <li><a href="<?= e($LINK_DAFTAR) ?>" class="nav__cta">Daftar</a></li>
+            </ul>
+        </div>
+    </header>
 
-    <div class="menu">
-        <ul>
-            <li class="logo">
-                <a href="https://codeigniter.com" target="_blank">
-                    <svg role="img" aria-label="Visit CodeIgniter.com official website!" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2100 500" height="44"><path fill="#dd4814" d="M148.2 411c-20.53-9.07-34.48-28.61-36.31-50.99 1.2-23.02 13.36-44.06 32.67-56.61-3.17 7.73-2.4 16.53 2 23.6 5.01 7 13.63 10.36 22.07 8.61 12.02-3.38 19.06-15.86 15.68-27.89-1.2-4.21-3.6-8.03-6.88-10.91-13.6-11.06-20.43-28.44-18-45.81 2.33-9.2 7.42-17.52 14.61-23.8-5.4 14.4 9.83 28.61 20.05 35.6 18.14 10.88 35.6 22.84 52.32 35.81 18.27 14.4 28.23 36.94 26.67 60-4.11 24.54-21.47 44.8-45.13 52.4 47.33-10.53 96.13-48.13 97.06-101.46-.93-42.67-26.4-80.96-65.33-98.4h-1.73c.86 2.09 1.28 4.34 1.2 6.61.13-1.47.13-2.93 0-4.4.21 1.73.21 3.47 0 5.2-2.96 12.13-15.2 19.6-27.36 16.64-4.86-1.2-9.2-3.93-12.32-7.87-15.6-20 0-42.76 2.61-64.76 1.6-28.13-11.25-55.02-34.05-71.46 11.41 19.02-3.79 44-14.84 58.21-11.07 14.21-27.07 24.8-40.11 37.2-14.05 13.07-26.93 27.44-38.49 42.8-24.99 30.53-34.8 70.8-26.67 109.4 11.15 37.2 42.07 65.15 80.2 72.4h.21l-.13-.12Zm324.56-159.8q0-17.92 6.16-35.56 6.44-17.92 18.48-31.92t29.68-22.68q17.64-8.96 40.04-8.96 26.6 0 45.36 12.04 19.04 12.04 28 31.36l-15.4 9.52q-4.76-9.8-11.76-16.52-6.72-6.72-14.56-10.92-7.84-4.2-16.24-5.88-8.4-1.96-16.52-1.96-17.92 0-31.64 7.28-13.72 7.28-23.24 19.04-9.24 11.76-14 26.6-4.76 14.56-4.76 29.68 0 16.52 5.6 31.64 5.88 15.12 15.68 26.88 10.08 11.48 23.52 18.48 13.72 6.72 29.68 6.72 8.4 0 17.08-1.96 8.96-2.24 17.08-6.72 8.4-4.76 15.4-11.48 7-7 11.76-16.8l16.24 8.4q-4.76 11.2-13.44 19.88-8.68 8.4-19.32 14.28-10.64 5.88-22.68 8.96-11.76 3.08-23.24 3.08-20.44 0-37.52-8.96-17.08-8.96-29.4-23.24-12.32-14.56-19.32-32.76-6.72-18.48-6.72-37.52Zm263.48 103.6q-15.96 0-29.12-5.88-13.16-6.16-22.96-16.52-9.52-10.36-14.84-24.08Q664 294.6 664 279.48q0-15.4 5.32-29.12 5.6-13.72 15.12-24.08 9.8-10.36 22.96-16.52t28.84-6.16q15.68 0 28.84 6.16 13.44 6.16 22.96 16.52 9.8 10.36 15.12 24.08 5.6 13.72 5.6 29.12 0 15.12-5.32 28.84t-15.12 24.08q-9.52 10.36-22.96 16.52-13.16 5.88-29.12 5.88Zm-52.92-75.04q0 12.32 4.2 22.96 4.2 10.36 11.2 18.48 7.28 7.84 16.8 12.32 9.8 4.48 20.72 4.48 10.92 0 20.44-4.48 9.8-4.76 17.08-12.6 7.28-8.12 11.48-18.76 4.2-10.64 4.2-22.96 0-12.04-4.2-22.68-4.2-10.92-11.48-18.76-7.28-8.12-17.08-12.6-9.52-4.76-20.44-4.76-10.92 0-20.44 4.76-9.52 4.48-16.8 12.6-7.28 8.12-11.48 19.04-4.2 10.64-4.2 22.96ZM900.6 354.8q-15.12 0-28-6.16-12.88-6.44-22.12-16.8t-14.56-23.8q-5.04-13.72-5.04-28.56 0-15.4 5.04-29.12 5.04-14 13.72-24.36 8.96-10.36 21-16.24 12.32-6.16 26.88-6.16 18.48 0 32.76 9.8 14.28 9.52 22.4 23.24V147.6h19.04v179.76q0 7.84 6.72 7.84V352q-4.2.84-6.72.84-6.72 0-11.76-4.2-5.04-4.48-5.04-10.64v-14.28Q946.24 338 931.4 346.4t-30.8 8.4Zm4.2-16.8q7 0 14.84-2.8 8.12-2.8 15.12-7.56 7-5.04 11.76-11.48 5.04-6.72 6.16-14.28V256.8q-2.8-7.56-8.12-14-5.32-6.72-12.32-11.76-6.72-5.04-14.56-7.84-7.84-2.8-15.4-2.8-11.76 0-21.28 5.04-9.52 5.04-16.52 13.44-6.72 8.12-10.36 18.76-3.64 10.64-3.64 21.84 0 11.76 4.2 22.4 4.2 10.64 11.48 18.76 7.28 7.84 17.08 12.6Q893.32 338 904.8 338Zm173.04 16.8q-15.96 0-29.4-5.88-13.16-6.16-22.96-16.52-9.8-10.64-15.4-24.36-5.32-13.72-5.32-29.4 0-15.4 5.32-28.84 5.6-13.72 15.12-23.8 9.8-10.36 23.24-16.24 13.44-6.16 29.12-6.16 15.96 0 29.12 6.16 13.44 5.88 22.96 16.24 9.52 10.36 14.84 23.8 5.32 13.44 5.32 28.56v4.48q0 2.24-.28 3.08h-124.88q.84 11.76 5.32 21.84 4.76 9.8 12.04 17.08 7.28 7.28 16.52 11.48 9.52 3.92 20.16 3.92 7 0 14-1.96t12.88-5.32q5.88-3.36 10.64-8.12 4.76-5.04 7.28-10.92l16.52 4.48q-3.36 8.12-9.52 14.84-6.16 6.44-14.28 11.48-8.12 4.76-17.92 7.56-9.8 2.52-20.44 2.52Zm-53.48-83.44h107.24q-.84-11.76-5.6-21.28-4.48-9.8-11.76-16.8-7-7-16.52-10.92-9.24-3.92-19.88-3.92-10.64 0-20.16 3.92t-16.8 10.92q-7 7-11.48 16.8-4.2 9.8-5.04 21.28Zm193.2 80.64h-38.64V153.2h38.64V352Zm93.52.84q-14.84 0-26.88-5.88t-21-15.96q-8.68-10.36-13.44-23.8-4.76-13.44-4.76-28.56 0-15.96 5.04-29.68 5.04-13.72 14-24.08 8.96-10.36 21.56-16.24 12.6-5.88 27.72-5.88 17.08 0 29.96 7.84 12.88 7.56 21.28 20.44v-25.76h32.76V345q0 16.24-6.16 29.12-6.16 12.88-17.08 21.84-10.64 8.96-25.76 13.72-14.84 4.76-32.48 4.76-24.08 0-40.6-7.84-16.24-8.12-28-22.68l20.44-19.88q8.4 10.36 21 16.24 12.88 5.88 27.16 5.88 8.68 0 16.52-2.24 8.12-2.52 14.28-7.56 6.16-5.04 9.52-12.88 3.64-7.84 3.64-18.48v-18.48q-7.28 12.6-20.44 19.6-13.16 6.72-28.28 6.72Zm12.6-29.96q6.16 0 11.76-1.96t10.36-5.32q4.76-3.36 8.4-7.84 3.64-4.48 5.6-9.52v-35q-5.04-12.88-15.96-20.72-10.64-7.84-22.4-7.84-8.68 0-15.68 3.92-7 3.64-12.04 10.08-5.04 6.16-7.84 14.28-2.52 8.12-2.52 16.8 0 8.96 3.08 16.8t8.4 13.72q5.6 5.88 12.88 9.24 7.28 3.36 15.96 3.36Zm243.88-62.44V352h-37.52v-82.32q0-17.64-6.16-25.76-6.16-8.12-17.08-8.12-5.6 0-11.48 2.24-5.88 2.24-11.2 6.44-5.04 3.92-9.24 9.52t-6.16 12.32V352h-37.52V205.28h33.88v27.16q8.12-14 23.52-21.84t34.72-7.84q13.72 0 22.4 5.04 8.68 5.04 13.44 13.16 4.76 8.12 6.44 18.48 1.96 10.36 1.96 21Zm70.28 91.56h-37.52V205.28h37.52V352Zm0-167.16h-37.52V147.6h37.52v37.24Zm114.24 129.92 7.56 29.68q-7.56 3.36-18.48 6.72-10.92 3.36-22.96 3.36-7.84 0-14.84-1.96-6.72-1.96-12.04-6.16-5.04-4.48-8.12-11.2-3.08-7-3.08-16.8v-84.28h-19.32v-28.84h19.32v-47.6h37.52v47.6h30.8v28.84h-30.8v71.68q0 7.84 3.92 11.2 4.2 3.08 10.08 3.08t11.48-1.96q5.6-1.96 8.96-3.36Zm91.56 40.04q-17.64 0-31.92-5.88-14.28-6.16-24.36-16.52t-15.68-24.08q-5.32-13.72-5.32-28.84 0-15.68 5.32-29.4 5.32-14 15.4-24.36 10.08-10.64 24.36-16.8 14.56-6.16 32.48-6.16 17.92 0 31.92 6.16 14.28 6.16 24.08 16.52 10.08 10.36 15.12 24.08 5.32 13.72 5.32 28.56 0 3.64-.28 7 0 3.36-.56 5.6h-113.4q.84 8.68 4.2 15.4 3.36 6.72 8.68 11.48 5.32 4.76 12.04 7.28 6.72 2.52 14 2.52 11.2 0 21-5.32 10.08-5.6 13.72-14.56l32.2 8.96q-8.12 16.8-26.04 27.72-17.64 10.64-42.28 10.64Zm-38.08-88.48h76.16q-1.4-16.52-12.32-26.32-10.64-10.08-26.04-10.08-7.56 0-14.28 2.8-6.44 2.52-11.48 7.28t-8.4 11.48q-3.08 6.72-3.64 14.84Zm225.12-62.72v34.16q-17.08.28-30.52 6.72-13.44 6.16-19.32 18.76V352h-37.52V205.28h34.44v31.36q3.92-7.56 9.24-13.44 5.32-6.16 11.48-10.64t12.32-6.72q6.44-2.52 12.32-2.52h4.48q1.68 0 3.08.28Z"/></svg>
-                </a>
-            </li>
-            <li class="menu-toggle">
-                <button id="menuToggle">&#9776;</button>
-            </li>
-            <li class="menu-item hidden"><a href="#">Home</a></li>
-            <li class="menu-item hidden"><a href="https://codeigniter.com/user_guide/" target="_blank">Docs</a>
-            </li>
-            <li class="menu-item hidden"><a href="https://forum.codeigniter.com/" target="_blank">Community</a></li>
-            <li class="menu-item hidden"><a
-                    href="https://codeigniter.com/contribute" target="_blank">Contribute</a>
-            </li>
-        </ul>
-    </div>
+    <!-- ================= BANNER ================= -->
+    <section class="hero" id="beranda">
+        <div class="container hero__grid">
+            <div>
+                <span class="hero__tag"><b></b> Buka setiap hari &middot; Pesan antar tersedia</span>
+                <h1>
+                    <span class="line1">Lapar atau haus?</span>
+                    <span class="line2">Doulyra jawabannya.</span>
+                </h1>
+                <p>Makanan hangat dan minuman segar, disiapkan saat Anda memesan lalu diantar sampai depan pintu.</p>
+                <div class="hero__btns">
+                    <a href="#menu" class="btn btn--cream">Lihat menu</a>
+                    <a href="<?= e($LINK_DAFTAR) ?>" class="btn btn--ghost">Buat akun</a>
+                </div>
+                <div class="hero__stats">
+                    <div><strong data-count="<?= count($makanan) ?>">0</strong><span>Pilihan makanan</span></div>
+                    <div><strong data-count="<?= count($minuman) ?>">0</strong><span>Pilihan minuman</span></div>
+                    <div><strong>Cash &amp; QRIS</strong><span>Metode bayar</span></div>
+                </div>
+            </div>
 
-    <div class="heroe">
+            <div class="hero__visual" aria-hidden="true">
+                <svg class="ring" viewBox="0 0 300 300">
+                    <defs>
+                        <path id="circ" d="M150,150 m-125,0 a125,125 0 1,1 250,0 a125,125 0 1,1 -250,0" />
+                    </defs>
+                    <text>
+                        <textPath href="#circ">MAKANAN ✦ MINUMAN ✦ SEGAR ✦ DIANTAR ✦ DOULYRA ✦ MAKANAN ✦ MINUMAN ✦ </textPath>
+                    </text>
+                </svg>
 
-        <h1>Welcome to CodeIgniter <?= CodeIgniter\CodeIgniter::CI_VERSION ?></h1>
+                <div class="plate">
+                    <?php $hf = $heroMakan ? fotoUrl($FOLDER_MAKANAN, $heroMakan['foto']) : ''; ?>
+                    <?php if ($hf): ?>
+                        <img src="<?= e($hf) ?>" alt="" onerror="this.outerHTML='<span class=&quot;plate__emoji&quot;>🍔</span>'">
+                    <?php else: ?>
+                        <span class="plate__emoji">🍔</span>
+                    <?php endif; ?>
+                </div>
 
-        <h2>The small framework with powerful features</h2>
+                <?php if ($heroMakan): ?>
+                    <div class="chip chip--a">
+                        <div class="chip__ico">🍽️</div>
+                        <div><small>Makanan pilihan</small><b><?= e($heroMakan['namamakanan']) ?></b></div>
+                    </div>
+                <?php endif; ?>
+                <?php if ($heroMinum): ?>
+                    <div class="chip chip--b">
+                        <div class="chip__ico">
+                            <?php $mf = fotoUrl($FOLDER_MINUMAN, $heroMinum['foto']); ?>
+                            <?php if ($mf): ?><img src="<?= e($mf) ?>" alt="" onerror="this.replaceWith('🥤')"><?php else: ?>🥤<?php endif; ?>
+                        </div>
+                        <div><small>Minuman pilihan</small><b><?= e($heroMinum['namaminuman']) ?></b></div>
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div>
 
-    </div>
-
-</header>
-
-<!-- CONTENT -->
-
-<section>
-
-    <h1>About this page</h1>
-
-    <p>The page you are looking at is being generated dynamically by CodeIgniter.</p>
-
-    <p>If you would like to edit this page you will find it located at:</p>
-
-    <pre><code>app/Views/welcome_message.php</code></pre>
-
-    <p>The corresponding controller for this page can be found at:</p>
-
-    <pre><code>app/Controllers/Home.php</code></pre>
-
-</section>
-
-<div class="further">
-
-    <section>
-
-        <h1>Go further</h1>
-
-        <h2>
-            <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><rect x='32' y='96' width='64' height='368' rx='16' ry='16' class="svg-stroke" /><line x1='112' y1='224' x2='240' y2='224' class="svg-stroke" /><line x1='112' y1='400' x2='240' y2='400' class="svg-stroke" /><rect x='112' y='160' width='128' height='304' rx='16' ry='16' class="svg-stroke" /><rect x='256' y='48' width='96' height='416' rx='16' ry='16' class="svg-stroke" /><path d='M422.46,96.11l-40.4,4.25c-11.12,1.17-19.18,11.57-17.93,23.1l34.92,321.59c1.26,11.53,11.37,20,22.49,18.84l40.4-4.25c11.12-1.17,19.18-11.57,17.93-23.1L445,115C443.69,103.42,433.58,94.94,422.46,96.11Z' class="svg-stroke"/></svg>
-            Learn
-        </h2>
-
-        <p>The User Guide contains an introduction, tutorial, a number of "how to"
-            guides, and then reference documentation for the components that make up
-            the framework. Check the <a href="https://codeigniter.com/user_guide/"
-            target="_blank">User Guide</a> !</p>
-
-        <h2>
-            <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><path d='M431,320.6c-1-3.6,1.2-8.6,3.3-12.2a33.68,33.68,0,0,1,2.1-3.1A162,162,0,0,0,464,215c.3-92.2-77.5-167-173.7-167C206.4,48,136.4,105.1,120,180.9a160.7,160.7,0,0,0-3.7,34.2c0,92.3,74.8,169.1,171,169.1,15.3,0,35.9-4.6,47.2-7.7s22.5-7.2,25.4-8.3a26.44,26.44,0,0,1,9.3-1.7,26,26,0,0,1,10.1,2L436,388.6a13.52,13.52,0,0,0,3.9,1,8,8,0,0,0,8-8,12.85,12.85,0,0,0-.5-2.7Z' class="svg-stroke" /><path d='M66.46,232a146.23,146.23,0,0,0,6.39,152.67c2.31,3.49,3.61,6.19,3.21,8s-11.93,61.87-11.93,61.87a8,8,0,0,0,2.71,7.68A8.17,8.17,0,0,0,72,464a7.26,7.26,0,0,0,2.91-.6l56.21-22a15.7,15.7,0,0,1,12,.2c18.94,7.38,39.88,12,60.83,12A159.21,159.21,0,0,0,284,432.11' class="svg-stroke" /></svg>
-            Discuss
-        </h2>
-
-        <p>CodeIgniter is a community-developed open source project, with several
-             venues for the community members to gather and exchange ideas. View all
-             the threads on <a href="https://forum.codeigniter.com/"
-             target="_blank">CodeIgniter's forum</a>, or <a href="https://join.slack.com/t/codeigniterchat/shared_invite/zt-rl30zw00-obL1Hr1q1ATvkzVkFp8S0Q"
-             target="_blank">chat on Slack</a> !</p>
-
-        <h2>
-        <svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 512 512'><line x1='176' y1='48' x2='336' y2='48' class="svg-stroke" /><line x1='118' y1='304' x2='394' y2='304' class="svg-stroke" /><path d='M208,48v93.48a64.09,64.09,0,0,1-9.88,34.18L73.21,373.49C48.4,412.78,76.63,464,123.08,464H388.92c46.45,0,74.68-51.22,49.87-90.51L313.87,175.66A64.09,64.09,0,0,1,304,141.48V48' class="svg-stroke" /></svg>
-             Contribute
-        </h2>
-
-        <p>CodeIgniter is a community driven project and accepts contributions
-             of code and documentation from the community. Why not
-             <a href="https://codeigniter.com/contribute" target="_blank">
-             join us</a> ?</p>
-
+        <div class="wave">
+            <svg viewBox="0 0 1440 80" preserveAspectRatio="none">
+                <path fill="#240657" d="M0,40 C240,90 480,0 720,30 C960,60 1200,90 1440,30 L1440,80 L0,80 Z" />
+            </svg>
+        </div>
     </section>
 
-</div>
-
-<!-- FOOTER: DEBUG INFO + COPYRIGHTS -->
-
-<footer>
-    <div class="environment">
-
-        <p>Page rendered in {elapsed_time} seconds using {memory_usage} MB of memory.</p>
-
-        <p>Environment: <?= ENVIRONMENT ?></p>
-
+    <!-- ================= MARQUEE ================= -->
+    <div class="marquee" aria-hidden="true">
+        <div class="marquee__track">
+            <?php for ($i = 0; $i < 2; $i++): ?>
+                <span>Dimasak saat dipesan</span><span>Minuman dingin segar</span><span>Bayar cash atau QRIS</span><span>Diantar ke alamat Anda</span><span>Rasa yang bikin kembali</span>
+            <?php endfor; ?>
+        </div>
     </div>
 
-    <div class="copyrights">
+    <!-- ================= MENU ================= -->
+    <main>
+        <section class="section" id="menu">
+            <div class="container">
+                <div class="section__head reveal">
+                    <h2>Menu Doulyra</h2>
+                    <p>Pilih makanan atau minuman favoritmu. Stok diperbarui langsung dari dapur kami.</p>
+                </div>
 
-        <p>&copy; <?= date('Y') ?> CodeIgniter Foundation. CodeIgniter is open source project released under the MIT
-            open source licence.</p>
+                <?php if ($dbError): ?>
+                    <div class="notice notice--err">Koneksi database gagal. Periksa pengaturan host, user, dan password di bagian atas file ini.</div>
+                <?php elseif ($demo): ?>
+                    <div class="notice notice--demo">Tabel <b>makanan</b> dan <b>minuman</b> masih kosong, jadi yang tampil adalah data contoh. Isi tabel lewat halaman karyawan dan menu asli akan muncul di sini.</div>
+                <?php endif; ?>
 
-    </div>
+                <div class="tabs reveal" role="tablist">
+                    <span class="tabs__pill" id="pill"></span>
+                    <button class="tab active" role="tab" data-target="panel-makanan">Makanan</button>
+                    <button class="tab" role="tab" data-target="panel-minuman">Minuman</button>
+                </div>
 
-</footer>
+                <div class="panel active" id="panel-makanan" role="tabpanel">
+                    <div class="grid">
+                        <?php foreach ($makanan as $m) kartuMenu($m, 'makanan', $FOLDER_MAKANAN, $LINK_PESAN); ?>
+                        <?php if (!$makanan): ?><p class="empty">Menu makanan belum tersedia.</p><?php endif; ?>
+                    </div>
+                </div>
 
-<!-- SCRIPTS -->
+                <div class="panel" id="panel-minuman" role="tabpanel">
+                    <div class="grid">
+                        <?php foreach ($minuman as $m) kartuMenu($m, 'minuman', $FOLDER_MINUMAN, $LINK_PESAN); ?>
+                        <?php if (!$minuman): ?><p class="empty">Menu minuman belum tersedia.</p><?php endif; ?>
+                    </div>
+                </div>
+            </div>
+        </section>
 
-<script {csp-script-nonce}>
-    document.getElementById("menuToggle").addEventListener('click', toggleMenu);
-    function toggleMenu() {
-        var menuItems = document.getElementsByClassName('menu-item');
-        for (var i = 0; i < menuItems.length; i++) {
-            var menuItem = menuItems[i];
-            menuItem.classList.toggle("hidden");
+        <!-- ================= CARA PESAN ================= -->
+        <section class="container" id="cara-pesan">
+            <div class="steps reveal">
+                <h2>Pesan dalam empat langkah</h2>
+                <div class="steps__grid">
+                    <div class="step">
+                        <div class="step__ico">📝</div>
+                        <h3>Daftar &amp; masuk</h3>
+                        <p>Buat akun pelanggan dengan nama, nomor HP, dan alamat Anda.</p>
+                    </div>
+                    <div class="step">
+                        <div class="step__ico">🍽️</div>
+                        <h3>Pilih menu</h3>
+                        <p>Tentukan makanan dan minuman, lalu isi jumlah pesanan.</p>
+                    </div>
+                    <div class="step">
+                        <div class="step__ico">💳</div>
+                        <h3>Bayar</h3>
+                        <p>Bayar tunai atau scan QRIS lalu unggah bukti pembayaran.</p>
+                    </div>
+                    <div class="step">
+                        <div class="step__ico">🛵</div>
+                        <h3>Pesanan datang</h3>
+                        <p>Pantau status: Di Siapkan, Di Antar, lalu Di Terima.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- ================= FOOTER ================= -->
+    <footer class="footer" id="kontak">
+        <div class="footer__wave">
+            <svg viewBox="0 0 1440 80" preserveAspectRatio="none">
+                <path fill="#240657" d="M0,80 L0,40 C240,0 480,70 720,40 C960,10 1200,0 1440,40 L1440,80 Z" />
+            </svg>
+        </div>
+        <div class="container">
+            <div class="footer__grid">
+                <div>
+                    <a href="#beranda" class="logo">Doulyra<i>.</i></a>
+                    <p>Toko makanan dan minuman yang menyiapkan pesanan Anda segar, lalu mengantarnya sampai rumah.</p>
+                    <div class="social">
+                        <a href="#" aria-label="Instagram">IG</a>
+                        <a href="#" aria-label="Facebook">FB</a>
+                        <a href="#" aria-label="WhatsApp">WA</a>
+                    </div>
+                </div>
+                <div>
+                    <h4>Jelajahi</h4>
+                    <ul>
+                        <li><a href="#beranda">Beranda</a></li>
+                        <li><a href="#menu">Menu</a></li>
+                        <li><a href="#cara-pesan">Cara pesan</a></li>
+                    </ul>
+                </div>
+                <div>
+                    <h4>Akun</h4>
+                    <ul>
+                        <li><a href="<?= e($LINK_LOGIN) ?>">Masuk</a></li>
+                        <li><a href="<?= e($LINK_DAFTAR) ?>">Daftar pelanggan</a></li>
+                    </ul>
+                </div>
+                <div>
+                    <h4>Hubungi kami</h4>
+                    <ul>
+                        <li>📍 Pekanbaru, Riau</li>
+                        <li>📞 0812-3456-7890</li>
+                        <li>✉️ halo@doulyra.com</li>
+                        <li>🕘 Setiap hari, 09.00 - 21.00</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="footer__bottom">&copy; <?= date('Y') ?> Doulyra. Semua hak dilindungi.</div>
+        </div>
+    </footer>
+
+    <script>
+        // Navbar berubah saat scroll
+        const nav = document.getElementById('nav');
+        const onScroll = () => nav.classList.toggle('scrolled', window.scrollY > 40);
+        onScroll();
+        window.addEventListener('scroll', onScroll, {
+            passive: true
+        });
+
+        // Menu mobile
+        const burger = document.getElementById('burger');
+        const links = document.getElementById('navLinks');
+        burger.addEventListener('click', () => links.classList.toggle('open'));
+        links.querySelectorAll('a').forEach(a => a.addEventListener('click', () => links.classList.remove('open')));
+
+        // Tab Makanan / Minuman dengan pil yang bergeser
+        const tabs = document.querySelectorAll('.tab');
+        const pill = document.getElementById('pill');
+
+        function movePill() {
+            const t = document.querySelector('.tab.active');
+            pill.style.width = t.offsetWidth + 'px';
+            pill.style.transform = `translateX(${t.offsetLeft - 6}px)`;
         }
-    }
-</script>
+        tabs.forEach(t => t.addEventListener('click', () => {
+            tabs.forEach(x => x.classList.remove('active'));
+            t.classList.add('active');
+            document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+            document.getElementById(t.dataset.target).classList.add('active');
+            movePill();
+        }));
+        window.addEventListener('load', movePill);
+        window.addEventListener('resize', movePill);
 
-<!-- -->
+        // Muncul saat di-scroll
+        const io = new IntersectionObserver(es => es.forEach(e => {
+            if (e.isIntersecting) {
+                e.target.classList.add('in');
+                io.unobserve(e.target);
+            }
+        }), {
+            threshold: .15
+        });
+        document.querySelectorAll('.reveal').forEach(el => io.observe(el));
 
+        // Hitung angka statistik
+        document.querySelectorAll('[data-count]').forEach(el => {
+            const end = +el.dataset.count;
+            let n = 0;
+            const step = Math.max(1, Math.ceil(end / 30));
+            const timer = setInterval(() => {
+                n = Math.min(end, n + step);
+                el.textContent = n + '+';
+                if (n >= end) clearInterval(timer);
+            }, 40);
+        });
+    </script>
 </body>
+
 </html>
