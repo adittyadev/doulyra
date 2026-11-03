@@ -210,6 +210,12 @@
         border-color: #dd9700;
         color: #212529;
     }
+
+    /* Modal QRIS */
+    #qrisKode img,
+    #qrisKode canvas {
+        display: block;
+    }
 </style>
 
 <?php
@@ -318,6 +324,41 @@ $menu = [
                                 <option value="<?= $s ?>" <?= old('status_pesanan') == $s ? 'selected' : '' ?>><?= $s ?></option>
                             <?php endforeach; ?>
                         </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Metode Pembayaran</label>
+                        <select name="metode_pembayaran" id="metode" class="form-control" required>
+                            <option value="">-- Pilih metode --</option>
+                            <?php foreach ($metode as $m) : ?>
+                                <option value="<?= esc($m) ?>" <?= old('metode_pembayaran') == $m ? 'selected' : '' ?>>
+                                    <?= strtolower($m) === 'cash' ? 'Cash' : strtoupper($m) ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <!-- Khusus cash -->
+                    <div id="boxCash" class="d-none">
+                        <div class="form-group">
+                            <label>Uang Dibayar</label>
+                            <input type="number" name="bayar" id="inputBayar" class="form-control" min="0" value="<?= esc(old('bayar')) ?>">
+                        </div>
+                        <div class="line d-flex justify-content-between mb-2">
+                            <span class="text-muted">Kembalian</span>
+                            <strong id="sumKembalian">Rp 0</strong>
+                        </div>
+                    </div>
+
+                    <!-- Khusus QRIS: status konfirmasi + tombol buka modal -->
+                    <div id="boxQris" class="d-none">
+                        <input type="hidden" name="konfirmasi_qris" id="konfirmasiQris" value="0">
+                        <div class="border rounded p-2 mb-3 d-flex justify-content-between align-items-center small">
+                            <span id="teksQris" class="text-muted">Pembayaran QRIS belum dikonfirmasi</span>
+                            <button type="button" class="btn btn-sm btn-outline-warning ml-2" data-toggle="modal" data-target="#modalQris">
+                                <i class="fas fa-qrcode"></i> QRIS
+                            </button>
+                        </div>
                     </div>
 
                     <hr>
@@ -492,6 +533,40 @@ $menu = [
     </div>
 </div>
 
+<!-- ============ MODAL: QRIS + konfirmasi pembayaran ============ -->
+<div class="modal fade" id="modalQris" tabindex="-1" role="dialog" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-qrcode mr-1"></i> Pembayaran QRIS</h5>
+                <button type="button" class="close" data-dismiss="modal" aria-label="Tutup"><span>&times;</span></button>
+            </div>
+            <div class="modal-body text-center">
+                <div class="text-muted small">Total bayar</div>
+                <div class="h3 font-weight-bold mb-3" style="color:#d97706" id="totalQris">Rp 0</div>
+
+                <?php if ($qrisStatis) : ?>
+                    <div id="qrisKode" class="d-inline-block border rounded p-2 bg-white"></div>
+                <?php else : ?>
+                    <img src="<?= base_url('uploads/qris.png') ?>" alt="QRIS" class="img-fluid border rounded" style="max-width:280px">
+                    <div class="small text-warning mt-2">QRIS statis belum diatur, nominal harus diketik manual oleh pelanggan.</div>
+                <?php endif; ?>
+
+                <p class="small text-muted mt-3 mb-0">
+                    Minta pelanggan memindai QR ini. Setelah pembayaran diterima, klik <b>Konfirmasi Pembayaran</b>.
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-light" data-dismiss="modal">Batal</button>
+                <button type="button" class="btn btn-warning font-weight-bold" id="btnKonfirmasiQris">
+                    <i class="fas fa-check-circle"></i> Konfirmasi Pembayaran
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
 <script>
     (function() {
         var pelangganId = document.getElementById('pelangganId');
@@ -501,6 +576,14 @@ $menu = [
             makanan: 'Makanan',
             minuman: 'Minuman'
         };
+        var metode = document.getElementById('metode');
+        var inputBayar = document.getElementById('inputBayar');
+        var boxCash = document.getElementById('boxCash');
+        var boxQris = document.getElementById('boxQris');
+        var konfirmasi = document.getElementById('konfirmasiQris');
+        var teksQris = document.getElementById('teksQris');
+        var btnKonfirmasi = document.getElementById('btnKonfirmasiQris');
+        var totalSekarang = 0;
 
         function rp(n) {
             return 'Rp ' + n.toLocaleString('id-ID');
@@ -511,6 +594,75 @@ $menu = [
             if (cls) e.className = cls;
             if (text !== undefined) e.textContent = text;
             return e;
+        }
+
+        // ===== QRIS dinamis: nominal otomatis terisi =====
+        var QRIS_STATIS = <?= json_encode($qrisStatis) ?>;
+        var qrisObj = null;
+
+        function crc16(s) {
+            var c = 0xFFFF;
+            for (var i = 0; i < s.length; i++) {
+                c ^= s.charCodeAt(i) << 8;
+                for (var j = 0; j < 8; j++) c = (c & 0x8000) ? ((c << 1) ^ 0x1021) : (c << 1);
+                c &= 0xFFFF;
+            }
+            return c.toString(16).toUpperCase().padStart(4, '0');
+        }
+
+        // Ubah QRIS statis menjadi dinamis dengan nominal tertentu
+        function qrisDinamis(statis, nominal) {
+            var tlv = [];
+            for (var i = 0; i < statis.length;) {
+                var len = parseInt(statis.substr(i + 2, 2), 10);
+                tlv.push([statis.substr(i, 2), statis.substr(i + 4, len)]);
+                i += 4 + len;
+            }
+
+            var data = tlv
+                .filter(function(t) {
+                    return t[0] !== '54' && t[0] !== '63'; // buang nominal & CRC lama
+                })
+                .map(function(t) {
+                    return t[0] === '01' ? [t[0], '12'] : t; // 11 = statis, 12 = dinamis
+                });
+            data.push(['54', String(Math.round(nominal))]);
+            data.sort(function(a, b) {
+                return a[0].localeCompare(b[0]);
+            });
+
+            var p = data.map(function(t) {
+                return t[0] + String(t[1].length).padStart(2, '0') + t[1];
+            }).join('') + '6304';
+            return p + crc16(p);
+        }
+
+        function buatQris(nominal) {
+            var box = document.getElementById('qrisKode');
+            if (!QRIS_STATIS || !box || nominal <= 0) return;
+
+            var teks = qrisDinamis(QRIS_STATIS, nominal);
+            if (qrisObj) {
+                qrisObj.clear();
+                qrisObj.makeCode(teks);
+            } else {
+                qrisObj = new QRCode(box, {
+                    text: teks,
+                    width: 240,
+                    height: 240,
+                    correctLevel: QRCode.CorrectLevel.M
+                });
+            }
+        }
+
+        // Status konfirmasi pembayaran QRIS
+        function setKonfirmasi(ok) {
+            konfirmasi.value = ok ? '1' : '0';
+            konfirmasi.dataset.nominal = ok ? totalSekarang : '';
+            teksQris.textContent = ok ?
+                '\u2713 Pembayaran QRIS dikonfirmasi (' + rp(totalSekarang) + ')' :
+                'Pembayaran QRIS belum dikonfirmasi';
+            teksQris.className = ok ? 'text-success font-weight-bold' : 'text-muted';
         }
 
         function setQty(input, q) {
@@ -614,14 +766,35 @@ $menu = [
             document.getElementById('modalInfo').textContent = ada ?
                 jumlahItem + ' item dipilih \u2022 ' + rp(total) : 'Belum ada menu dipilih';
             document.getElementById('sumTotal').textContent = rp(total);
-            document.getElementById('btnSubmit').disabled = !(ada && adaPelanggan);
-            document.getElementById('hint').classList.toggle('d-none', ada && adaPelanggan);
-            document.getElementById('hintText').textContent = !adaPelanggan ?
-                'Pilih pelanggan terlebih dahulu' :
-                'Pilih minimal satu makanan atau minuman';
+
+            // QRIS: nominal ikut total; konfirmasi dibatalkan jika total berubah
+            totalSekarang = total;
+            document.getElementById('totalQris').textContent = rp(total);
+            btnKonfirmasi.disabled = total <= 0;
+            buatQris(total);
+            if (konfirmasi.value === '1' && parseInt(konfirmasi.dataset.nominal, 10) !== total) setKonfirmasi(false);
+
+            var cash = metode.value.toLowerCase() === 'cash';
+            var qris = metode.value.toLowerCase() === 'qris';
+            var bayar = parseInt(inputBayar.value, 10) || 0;
+            var kurang = cash && bayar < total;
+            var belumKonfirmasi = qris && konfirmasi.value !== '1';
+
+            boxCash.classList.toggle('d-none', !cash);
+            boxQris.classList.toggle('d-none', !qris);
+            document.getElementById('sumKembalian').textContent = rp(Math.max(0, bayar - total));
+
+            var siap = ada && adaPelanggan && metode.value !== '' && !kurang && !belumKonfirmasi;
+
+            document.getElementById('btnSubmit').disabled = !siap;
+            document.getElementById('hint').classList.toggle('d-none', siap);
+            document.getElementById('hintText').textContent = !adaPelanggan ? 'Pilih pelanggan terlebih dahulu' :
+                !ada ? 'Pilih minimal satu makanan atau minuman' :
+                metode.value === '' ? 'Pilih metode pembayaran' :
+                belumKonfirmasi ? 'Konfirmasi pembayaran QRIS terlebih dahulu' :
+                'Uang yang dibayar kurang dari total';
         }
 
-        // Tombol +/- dan input jumlah di modal menu
         document.getElementById('modalMenu').addEventListener('click', function(e) {
             var btn = e.target.closest('.menu-btn');
             if (!btn) return;
@@ -761,6 +934,24 @@ $menu = [
             });
 
             document.getElementById('kosongPelanggan').classList.toggle('d-none', tampil > 0);
+        });
+
+        // Ganti metode: QRIS langsung membuka modal QRIS (jika sudah ada menu)
+        metode.addEventListener('change', function() {
+            if (metode.value.toLowerCase() !== 'qris') {
+                setKonfirmasi(false);
+            } else if (totalSekarang > 0) {
+                $('#modalQris').modal('show');
+            }
+            hitung();
+        });
+        inputBayar.addEventListener('input', hitung);
+
+        // Tombol "Konfirmasi Pembayaran" di modal QRIS
+        btnKonfirmasi.addEventListener('click', function() {
+            setKonfirmasi(true);
+            $('#modalQris').modal('hide');
+            hitung();
         });
 
         hitung();

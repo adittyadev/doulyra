@@ -1232,8 +1232,6 @@
 </head>
 
 <body>
-
-    <!-- ================= NAVBAR ================= -->
     <header class="nav" id="nav">
         <div class="container nav__in">
             <a href="#beranda" class="logo">Doulyra<i>.</i></a>
@@ -1241,7 +1239,6 @@
             <ul class="nav__links" id="navLinks">
                 <li><a href="#beranda">Beranda</a></li>
                 <li><a href="#menu">Menu</a></li>
-                <li><a href="#kontak">Kontak</a></li>
 
                 <!-- Tombol Live Chat -->
                 <li>
@@ -1352,35 +1349,6 @@
                 </div>
             </div>
         </section>
-
-        <!-- ================= CARA PESAN ================= -->
-        <section class="container" id="cara-pesan">
-            <div class="steps reveal">
-                <h2>Pesan dalam empat langkah</h2>
-                <div class="steps__grid">
-                    <div class="step">
-                        <div class="step__ico">📝</div>
-                        <h3>Daftar &amp; masuk</h3>
-                        <p>Buat akun pelanggan dengan nama, nomor HP, dan alamat Anda.</p>
-                    </div>
-                    <div class="step">
-                        <div class="step__ico">🍽️</div>
-                        <h3>Pilih menu</h3>
-                        <p>Tentukan makanan dan minuman, lalu isi jumlah pesanan.</p>
-                    </div>
-                    <div class="step">
-                        <div class="step__ico">💳</div>
-                        <h3>Bayar</h3>
-                        <p>Bayar tunai atau scan QRIS lalu unggah bukti pembayaran.</p>
-                    </div>
-                    <div class="step">
-                        <div class="step__ico">🛵</div>
-                        <h3>Pesanan datang</h3>
-                        <p>Pantau status: Di Siapkan, Di Antar, lalu Di Terima.</p>
-                    </div>
-                </div>
-            </div>
-        </section>
     </main>
 
     <!-- ================= FOOTER ================= -->
@@ -1406,7 +1374,6 @@
                     <ul>
                         <li><a href="#beranda">Beranda</a></li>
                         <li><a href="#menu">Menu</a></li>
-                        <li><a href="#cara-pesan">Cara pesan</a></li>
                     </ul>
                 </div>
                 <div>

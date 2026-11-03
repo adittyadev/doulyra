@@ -26,7 +26,7 @@ $badge = [
                     <th>Menu</th>
                     <th>Total Bayar</th>
                     <th>Status</th>
-                    <th width="120">Aksi</th>
+                    <th width="150">Aksi</th>
                 </tr>
             </thead>
             <tbody>
@@ -52,6 +52,9 @@ $badge = [
                             </span>
                         </td>
                         <td>
+                            <a href="<?= base_url('transaksi/faktur/' . $row['idtransaksi']) ?>" target="_blank" class="btn btn-info btn-sm" title="Lihat / cetak faktur">
+                                <i class="fas fa-file-invoice"></i>
+                            </a>
                             <button type="button" class="btn btn-warning btn-sm btn-status" title="Ganti status"
                                 data-id="<?= esc($row['idtransaksi']) ?>" data-status="<?= esc($row['status_pesanan']) ?>">
                                 <i class="fas fa-sync-alt"></i>

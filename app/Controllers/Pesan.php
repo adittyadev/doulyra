@@ -8,6 +8,9 @@ use CodeIgniter\Exceptions\PageNotFoundException;
 
 class Pesan extends BaseController
 {
+    // Teks QRIS statis (hasil scan qris.png). Dipakai jika qris.statis di .env tidak terbaca.
+    private const QRIS_STATIS = '00020101021126570011ID.DANA.WWW011893600915303338570402090333857040303UMI51440014ID.CO.QRIS.WWW0215ID10265528074260303UMI5204599553033605802ID5915Petshop Bigboss6011Kota Padang6105251216304CA1E';
+
     public function index($jenis, $id)
     {
         if (!session()->get('logged_in')) {
@@ -45,7 +48,11 @@ class Pesan extends BaseController
             throw PageNotFoundException::forPageNotFound();
         }
 
-        return view('pesan/index', ['menu' => $menu, 'awal' => $awal]);
+        return view('pesan/index', [
+            'menu'       => $menu,
+            'awal'       => $awal,
+            'qrisStatis' => trim((string) env('qris.statis', '')) ?: self::QRIS_STATIS,
+        ]);
     }
 
     private function wajibLogin()
@@ -94,6 +101,17 @@ class Pesan extends BaseController
 
         if (!in_array($metode, ['cash', 'qris'], true) || !is_array($items) || !$items) {
             return redirect()->back()->with('error', 'Pesanan tidak valid.');
+        }
+
+        // QRIS wajib menyertakan bukti pembayaran (diunggah lewat modal QRIS)
+        $bukti     = $this->request->getFile('bukti');
+        $namaBukti = null;
+
+        if ($metode === 'qris') {
+            if (!$this->validate(['bukti' => 'uploaded[bukti]|is_image[bukti]|max_size[bukti,2048]'])) {
+                return redirect()->back()->with('error', 'Unggah gambar bukti pembayaran (maksimal 2 MB).');
+            }
+            $namaBukti = $bukti->getRandomName();
         }
 
         $peta = [
@@ -185,6 +203,7 @@ class Pesan extends BaseController
                     'transaksi_id'      => $idTrx,
                     'total_bayar'       => $total,
                     'metode_pembayaran' => $metode,
+                    'bukti_pembayaran'  => $namaBukti,
                     'status_pembayaran' => 'menunggu',
                 ]);
             }
@@ -204,9 +223,15 @@ class Pesan extends BaseController
             return redirect()->back()->with('error', 'Gagal simpan: ' . ($galat ?: 'penyebab tidak diketahui'));
         }
 
-        return redirect()->to(site_url(($metode === 'qris' ? 'pesan/qris/' : 'pesan/detail/') . $idTrx));
+        // File bukti dipindahkan setelah data berhasil tersimpan
+        if ($namaBukti) {
+            $bukti->move(FCPATH . 'uploads/bukti', $namaBukti);
+        }
+
+        return redirect()->to(site_url('pesan/detail/' . $idTrx));
     }
 
+    // Cadangan: halaman QRIS terpisah untuk pesanan QRIS yang belum punya bukti
     public function qris($id)
     {
         if ($r = $this->wajibLogin()) {
@@ -215,7 +240,7 @@ class Pesan extends BaseController
 
         [$trx,, $bayar] = $this->milik($id);
 
-        if ($bayar['metode_pembayaran'] !== 'qris' || $bayar['bukti']) {
+        if ($bayar['metode_pembayaran'] !== 'qris' || $bayar['bukti_pembayaran']) {
             return redirect()->to(site_url('pesan/detail/' . $id));
         }
 
@@ -230,7 +255,7 @@ class Pesan extends BaseController
 
         [,, $bayar] = $this->milik($id);
 
-        if ($bayar['metode'] !== 'qris' || $bayar['bukti']) {
+        if ($bayar['metode_pembayaran'] !== 'qris' || $bayar['bukti_pembayaran']) {
             return redirect()->to(site_url('pesan/detail/' . $id));
         }
 
@@ -245,7 +270,7 @@ class Pesan extends BaseController
         $db = db_connect();
         $db->transStart();
         $db->table('pembayaran')->where('transaksi_id', $id)
-            ->update(['bukti' => $nama, 'status_pembayaran' => 'Menunggu Verifikasi']);
+            ->update(['bukti_pembayaran' => $nama, 'status_pembayaran' => 'Menunggu Verifikasi']);
         $db->transComplete();
 
         return redirect()->to(site_url('pesan/detail/' . $id));
@@ -259,7 +284,7 @@ class Pesan extends BaseController
 
         [$trx, $items, $bayar] = $this->milik($id);
 
-        if ($bayar['metode_pembayaran'] === 'qris' && !$bayar['bukti']) {
+        if ($bayar['metode_pembayaran'] === 'qris' && !$bayar['bukti_pembayaran']) {
             return redirect()->to(site_url('pesan/qris/' . $id));
         }
 

@@ -205,12 +205,24 @@
             color: var(--cream)
         }
 
-        #bukti {
-            display: none
+        .qris-info {
+            display: none;
+            align-items: center;
+            justify-content: space-between;
+            gap: 10px;
+            padding: 12px 14px;
+            border-radius: 14px;
+            background: var(--purple-soft);
+            font-size: .92rem
         }
 
-        #bukti input {
-            width: 100%
+        .qris-info button {
+            border: 0;
+            background: none;
+            color: var(--purple);
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap
         }
 
         .total {
@@ -252,6 +264,10 @@
             flex-direction: column;
             overflow: hidden;
             box-shadow: 0 30px 70px rgba(20, 0, 60, .5)
+        }
+
+        .dialog--sm {
+            width: min(420px, 100%)
         }
 
         .dialog__head {
@@ -353,6 +369,32 @@
             margin-top: auto
         }
 
+        /* isi modal QRIS */
+        .qris-body {
+            padding: 0 24px 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            text-align: center;
+            overflow-y: auto
+        }
+
+        .qris-body img {
+            width: 100%;
+            max-width: 280px;
+            margin: 0 auto;
+            border-radius: 16px;
+            background: #fff;
+            padding: 10px
+        }
+
+        .qris-body input[type=file] {
+            width: 100%;
+            background: #fff;
+            padding: 10px;
+            border-radius: 12px
+        }
+
         @media(max-width:600px) {
             .box {
                 padding: 22px
@@ -384,7 +426,7 @@
     <div class="wrap">
         <a href="<?= site_url('/#menu') ?>" class="back">&larr; Kembali ke menu</a>
 
-        <form class="box" action="<?= site_url('pesan/simpan') ?>" method="post" enctype="multipart/form-data">
+        <form class="box" id="formPesan" action="<?= site_url('pesan/simpan') ?>" method="post" enctype="multipart/form-data">
             <?= csrf_field() ?>
             <h1>Pesanan Anda</h1>
             <?php if (session('error')): ?>
@@ -404,9 +446,9 @@
                 </div>
             </div>
 
-            <div id="bukti">
-                <label class="t">Unggah bukti pembayaran</label>
-                <input type="file" name="bukti" accept="image/*">
+            <div class="qris-info" id="infoQris">
+                <span id="statusBukti">Bukti pembayaran belum diunggah</span>
+                <button type="button" id="bukaQris">Lihat QRIS</button>
             </div>
 
             <div class="total">
@@ -434,6 +476,31 @@
         </div>
     </div>
 
+    <!-- Modal QRIS: foto QRIS + upload bukti pembayaran -->
+    <div class="modal" id="modalQris">
+        <div class="dialog dialog--sm" role="dialog" aria-modal="true" aria-label="Pembayaran QRIS">
+            <div class="dialog__head">
+                <h2>Pembayaran QRIS</h2>
+                <button type="button" class="x" id="tutupQris" aria-label="Tutup">&times;</button>
+            </div>
+            <div class="qris-body">
+                <div>Total bayar <strong id="totalQris" style="color:var(--purple);font-size:1.3rem">Rp 0</strong></div>
+                <?php if ($qrisStatis) : ?>
+                    <div id="qrisKode" style="display:flex;justify-content:center;background:#fff;border-radius:16px;padding:12px;width:fit-content;margin:0 auto"></div>
+                <?php else : ?>
+                    <img src="<?= base_url('uploads/qris.jpeg') ?>" alt="QRIS Doulyra">
+                    <small style="color:#b45309">QRIS statis belum terbaca dari .env, nominal harus diketik manual.</small>
+                <?php endif; ?>
+                <div style="text-align:left">
+                    <label class="t">Unggah bukti pembayaran</label>
+                    <input type="file" id="fileBukti" name="bukti" form="formPesan" accept="image/*">
+                </div>
+                <button type="button" class="btn" id="simpanBukti">Selesai</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
     <script>
         const menu = <?= json_encode($menu, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>;
         const keranjang = {};
@@ -459,7 +526,64 @@
         const kirim = document.getElementById('kirim');
         const modal = document.getElementById('modal');
         const gridMenu = document.getElementById('gridMenu');
+        const form = document.getElementById('formPesan');
+        const modalQris = document.getElementById('modalQris');
+        const fileBukti = document.getElementById('fileBukti');
+        const infoQris = document.getElementById('infoQris');
+        const statusBukti = document.getElementById('statusBukti');
         let tab = 'makanan';
+
+        // ===== QRIS dinamis: nominal otomatis terisi =====
+        const QRIS_STATIS = <?= json_encode($qrisStatis) ?>;
+        let qrisObj = null;
+
+        function crc16(s) {
+            let c = 0xFFFF;
+            for (let i = 0; i < s.length; i++) {
+                c ^= s.charCodeAt(i) << 8;
+                for (let j = 0; j < 8; j++) c = (c & 0x8000) ? ((c << 1) ^ 0x1021) : (c << 1);
+                c &= 0xFFFF;
+            }
+            return c.toString(16).toUpperCase().padStart(4, '0');
+        }
+
+        // Ubah QRIS statis menjadi dinamis dengan nominal tertentu
+        function qrisDinamis(statis, nominal) {
+            // Pecah string menjadi pasangan [id, nilai] (format TLV)
+            const tlv = [];
+            for (let i = 0; i < statis.length;) {
+                const len = parseInt(statis.substr(i + 2, 2), 10);
+                tlv.push([statis.substr(i, 2), statis.substr(i + 4, len)]);
+                i += 4 + len;
+            }
+
+            const data = tlv
+                .filter(([id]) => id !== '54' && id !== '63') // buang nominal & CRC lama
+                .map(([id, v]) => id === '01' ? [id, '12'] : [id, v]); // 11 = statis, 12 = dinamis
+            data.push(['54', String(Math.round(nominal))]);
+            data.sort((a, b) => a[0].localeCompare(b[0]));
+
+            const p = data.map(([id, v]) => id + String(v.length).padStart(2, '0') + v).join('') + '6304';
+            return p + crc16(p);
+        }
+
+        function buatQris(nominal) {
+            const box = document.getElementById('qrisKode');
+            if (!QRIS_STATIS || !box || nominal <= 0) return;
+
+            const teks = qrisDinamis(QRIS_STATIS, nominal);
+            if (qrisObj) {
+                qrisObj.clear();
+                qrisObj.makeCode(teks);
+            } else {
+                qrisObj = new QRCode(box, {
+                    text: teks,
+                    width: 260,
+                    height: 260,
+                    correctLevel: QRCode.CorrectLevel.M
+                });
+            }
+        }
 
         function render() {
             const keys = Object.keys(keranjang);
@@ -487,7 +611,11 @@
             <input type="hidden" name="items[${i}][id]" value="${h(byKey[k].id)}">
             <input type="hidden" name="items[${i}][jumlah]" value="${keranjang[k]}">`).join('');
 
-            total.textContent = rp(keys.reduce((s, k) => s + byKey[k].harga * keranjang[k], 0));
+            const nominal = keys.reduce((s, k) => s + byKey[k].harga * keranjang[k], 0);
+            const jumlah = rp(nominal);
+            total.textContent = jumlah;
+            document.getElementById('totalQris').textContent = jumlah;
+            buatQris(nominal);
             kirim.disabled = !keys.length;
             renderModal();
         }
@@ -537,20 +665,45 @@
             renderModal();
         }));
 
+        // Modal pilih menu
         document.getElementById('tambah').onclick = () => modal.classList.add('open');
         document.getElementById('tutup').onclick = () => modal.classList.remove('open');
         modal.addEventListener('click', e => {
             if (e.target === modal) modal.classList.remove('open');
         });
         document.addEventListener('keydown', e => {
-            if (e.key === 'Escape') modal.classList.remove('open');
+            if (e.key === 'Escape') document.querySelectorAll('.modal').forEach(m => m.classList.remove('open'));
         });
 
+        // Modal QRIS
+        function updateQris() {
+            infoQris.style.display = form.metode.value === 'qris' ? 'flex' : 'none';
+            statusBukti.textContent = fileBukti.files.length ? '✓ ' + fileBukti.files[0].name : 'Bukti pembayaran belum diunggah';
+        }
+
         document.querySelectorAll('[name=metode]').forEach(r => r.addEventListener('change', () => {
-            document.getElementById('bukti').style.display = r.value === 'qris' && r.checked ? 'block' : 'none';
+            if (r.checked && r.value === 'qris') modalQris.classList.add('open');
+            if (r.checked && r.value === 'cash') fileBukti.value = '';
+            updateQris();
         }));
 
+        document.getElementById('bukaQris').onclick = () => modalQris.classList.add('open');
+        document.getElementById('tutupQris').onclick = document.getElementById('simpanBukti').onclick = () => modalQris.classList.remove('open');
+        modalQris.addEventListener('click', e => {
+            if (e.target === modalQris) modalQris.classList.remove('open');
+        });
+        fileBukti.addEventListener('change', updateQris);
+
+        // QRIS wajib ada bukti sebelum pesanan dikirim
+        form.addEventListener('submit', e => {
+            if (form.metode.value === 'qris' && !fileBukti.files.length) {
+                e.preventDefault();
+                modalQris.classList.add('open');
+            }
+        });
+
         render();
+        updateQris();
     </script>
 </body>
 

@@ -35,4 +35,15 @@ class PembayaranModel extends Model
 
         return $builder->orderBy('pembayaran.tglpembayaran', 'DESC')->findAll();
     }
+
+    public function enumValues(string $field): array
+    {
+        $row = $this->db->query("SHOW COLUMNS FROM {$this->table} LIKE ?", [$field])->getRowArray();
+
+        if (! $row || ! preg_match("/^enum\((.*)\)$/i", $row['Type'], $m)) {
+            return [];
+        }
+
+        return array_map(fn($v) => trim($v, "'"), explode(',', $m[1]));
+    }
 }

@@ -63,3 +63,5 @@ $routes->get('chat/admin/daftar', 'Chat::adminDaftar');
 $routes->get('chat/admin/(:num)', 'Chat::adminAmbil/$1');
 $routes->post('chat/admin/(:num)/kirim', 'Chat::adminKirim/$1');
 $routes->get('chat/pesan-masuk', 'Chat::adminHalaman');
+
+$routes->get('transaksi/faktur/(:segment)', 'Transaksi::faktur/$1');

@@ -6,6 +6,7 @@ use App\Models\DetailTransaksiModel;
 use App\Models\MakananModel;
 use App\Models\MinumanModel;
 use App\Models\PelangganModel;
+use App\Models\PembayaranModel;
 use App\Models\TransaksiModel;
 use CodeIgniter\Database\Exceptions\DatabaseException;
 
@@ -16,14 +17,16 @@ class Transaksi extends BaseController
     protected $pelangganModel;
     protected $makananModel;
     protected $minumanModel;
+    protected $pembayaranModel;
 
     public function __construct()
     {
-        $this->transaksiModel = new TransaksiModel();
-        $this->detailModel    = new DetailTransaksiModel();
-        $this->pelangganModel = new PelangganModel();
-        $this->makananModel   = new MakananModel();
-        $this->minumanModel   = new MinumanModel();
+        $this->transaksiModel  = new TransaksiModel();
+        $this->detailModel     = new DetailTransaksiModel();
+        $this->pelangganModel  = new PelangganModel();
+        $this->makananModel    = new MakananModel();
+        $this->minumanModel    = new MinumanModel();
+        $this->pembayaranModel = new PembayaranModel();
     }
 
     public function index()
@@ -35,12 +38,14 @@ class Transaksi extends BaseController
 
     public function create()
     {
-        return view('transaksi/create', $this->dataPilihan());
+        return view('transaksi/create', $this->dataPilihan() + [
+            'qrisStatis' => config('Qris')->statis,
+        ]);
     }
 
     public function store()
     {
-        if (! $this->validate($this->rules())) {
+        if (! $this->validate($this->rulesStore())) {
             return redirect()->back()->withInput()->with('errors', $this->validator->getErrors());
         }
 
@@ -48,6 +53,33 @@ class Transaksi extends BaseController
 
         if (! $items) {
             return redirect()->back()->withInput()->with('errors', ['Pilih minimal satu makanan atau minuman']);
+        }
+
+        $total  = (int) array_sum(array_column($items, 'subtotal'));
+        $metode = $this->request->getPost('metode_pembayaran');
+
+        // Hitung bayar, kembalian, dan status pembayaran sesuai metode
+        if (strtolower($metode) === 'cash') {
+            $bayar = (int) $this->request->getPost('bayar');
+
+            if ($bayar < $total) {
+                return redirect()->back()->withInput()->with('errors', ['Uang yang dibayar kurang dari total']);
+            }
+
+            $kembalian = $bayar - $total;
+            $status    = 'lunas';      // sesuaikan dengan enum status_pembayaran
+        } elseif (strtolower($metode) === 'qris') {
+            if ($this->request->getPost('konfirmasi_qris') !== '1') {
+                return redirect()->back()->withInput()->with('errors', ['Konfirmasi pembayaran QRIS terlebih dahulu']);
+            }
+
+            $bayar     = $total;
+            $kembalian = 0;
+            $status    = 'lunas';      // sesuaikan dengan enum status_pembayaran
+        } else {
+            $bayar     = $total;
+            $kembalian = 0;
+            $status    = 'menunggu';
         }
 
         $id = $this->generateId();
@@ -59,10 +91,21 @@ class Transaksi extends BaseController
             'idtransaksi'    => $id,
             'tgltransaksi'   => $this->request->getPost('tgltransaksi'),
             'pelanggan_id'   => $this->request->getPost('pelanggan_id'),
-            'totalbayar'     => array_sum(array_column($items, 'subtotal')),
+            'totalbayar'     => $total,
             'status_pesanan' => $this->request->getPost('status_pesanan'),
         ]);
         $this->simpanDetail($id, $items);
+
+        $this->pembayaranModel->insert([
+            'idpembayaran'      => $this->generateIdPembayaran(),
+            'tglpembayaran'     => date('Y-m-d'),
+            'transaksi_id'      => $id,
+            'total_bayar'       => $total,
+            'bayar'             => $bayar,
+            'kembalian'         => $kembalian,
+            'metode_pembayaran' => $metode,
+            'status_pembayaran' => $status,
+        ]);
 
         $db->transComplete();
 
@@ -140,12 +183,23 @@ class Transaksi extends BaseController
         return redirect()->to('/transaksi')->with('success', 'Data transaksi berhasil dihapus');
     }
 
+    // Aturan dasar (dipakai store dan update)
     private function rules(): array
     {
         return [
             'tgltransaksi'   => 'required|valid_date[Y-m-d]',
             'pelanggan_id'   => 'required|is_not_unique[pelanggan.idpelanggan]',
             'status_pesanan' => 'required|in_list[Di Siapkan,Di Antar,Di Terima]',
+        ];
+    }
+
+    // Aturan khusus tambah transaksi: ditambah metode pembayaran
+    private function rulesStore(): array
+    {
+        $metode = implode(',', $this->pembayaranModel->enumValues('metode_pembayaran'));
+
+        return $this->rules() + [
+            'metode_pembayaran' => 'required|in_list[' . $metode . ']',
         ];
     }
 
@@ -156,6 +210,7 @@ class Transaksi extends BaseController
             'pelanggan' => $this->pelangganModel->findAll(),
             'makanan'   => $this->makananModel->findAll(),
             'minuman'   => $this->minumanModel->findAll(),
+            'metode'    => $this->pembayaranModel->enumValues('metode_pembayaran'),
         ];
     }
 
@@ -214,7 +269,6 @@ class Transaksi extends BaseController
         return $hasil;
     }
 
-    // Format ID: TRX20261023001, TRX20261023002, ... (urut per hari)
     private function generateId(): string
     {
         $prefix = 'TRX' . date('Ymd');
@@ -222,6 +276,39 @@ class Transaksi extends BaseController
         $next   = $last ? ((int) substr($last, -3)) + 1 : 1;
 
         return $prefix . str_pad($next, 3, '0', STR_PAD_LEFT);
+    }
+
+    private function generateIdPembayaran(): string
+    {
+        $prefix = 'PAY' . date('Ymd');
+        $last   = $this->pembayaranModel->like('idpembayaran', $prefix, 'after')->selectMax('idpembayaran')->first()['idpembayaran'] ?? null;
+        $next   = $last ? ((int) substr($last, -3)) + 1 : 1;
+
+        return $prefix . str_pad($next, 3, '0', STR_PAD_LEFT);
+    }
+
+    // Faktur transaksi (halaman siap cetak)
+    public function faktur($id)
+    {
+        $transaksi = $this->transaksiModel->find($id);
+
+        if (! $transaksi) {
+            return redirect()->to('/transaksi')->with('error', 'Data transaksi tidak ditemukan');
+        }
+
+        $items = db_connect()->table('detail_transaksi d')
+            ->select("d.*, COALESCE(m.namamakanan, n.namaminuman) AS nama, IF(d.makanan_id IS NULL, 'Minuman', 'Makanan') AS jenis", false)
+            ->join('makanan m', 'm.idmakanan = d.makanan_id', 'left')
+            ->join('minuman n', 'n.idminuman = d.minuman_id', 'left')
+            ->where('d.transaksi_id', $id)
+            ->get()->getResultArray();
+
+        return view('transaksi/faktur', [
+            'transaksi' => $transaksi,
+            'pelanggan' => $this->pelangganModel->find($transaksi['pelanggan_id']),
+            'items'     => $items,
+            'bayar'     => $this->pembayaranModel->where('transaksi_id', $id)->first(),
+        ]);
     }
 
     public function ubahStatus($id)
